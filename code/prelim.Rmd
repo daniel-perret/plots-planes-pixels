@@ -1,0 +1,407 @@
+---
+title: "Prelim"
+author: "D Perret"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = FALSE,
+                      prompt = FALSE,
+                      error = TRUE,
+                      message = FALSE,
+                      cache = FALSE,
+                      cache.lazy = FALSE,
+                      eval = TRUE,
+                      eval.after = "fig.cap")
+
+library(tidyverse)
+library(rFIA)
+library(ggplot2)
+library(ggExtra)
+library(rgdal)
+library(sp)
+library(ggsci)
+library(raster)
+library(splines)
+library(lme4)
+library(brms)
+library(patchwork)
+library(performance)
+library(ggeffects)
+select <- dplyr::select
+
+# setting my preferred ggplot2 theme
+theme_set(theme_bw())
+theme_update(text = element_text(size=16, color = "black"),
+             panel.grid.major = element_blank(),
+             panel.grid.minor = element_blank(),
+             strip.background = element_blank(),
+             panel.border=element_rect(size=1.5))
+
+# colors to be used in all map figures
+mapcolor <- "wheat3"
+linecolor <- "gray40"
+
+
+# sourcing estimation base code
+source("code/growMort_rewrite_METRIC.R")
+
+```
+
+# Data preparation
+
+## FIA data
+
+Something to note here is that the latest FIA release no longer includes "TPA_MORT" or RECR or GROW in the TREE table, which breaks the growMort function... fahk, need to figure out a workaround for that. 
+
+```{r fia.data, echo=T}
+
+# reading downloaded FIA data from a local directory, using rFIA functionality
+
+fia <- readFIA(dir = "/Users/DanielPerret/Box/01. daniel.perret Workspace/PROJECTS/plots-planes-pixels/data/FIA/",
+               common=T, states=c("OR"))
+
+fia <- readFIA(dir = "/Users/DanielPerret/Box/01. daniel.perret Workspace/fia_data_082123/",
+               common=T, states=c("OR"))
+
+exact.coords <- read.csv("D:/coords_format.csv",header=T) %>% 
+  select(PLT_CN = ID1,
+         LAT_EXACT = lat,
+         LON_EXACT = long)
+
+#creating some fields in various tables
+
+fia$PLOT <- fia$PLOT %>% 
+  mutate(pltID = paste(UNITCD,STATECD,COUNTYCD,PLOT,sep="_"),
+         PLT_CN = CN,
+         ECOSUBCD = trimws(ECOSUBCD)) %>% 
+  group_by(pltID) %>% 
+  mutate(most.recent = ifelse(MEASYEAR==max(MEASYEAR),
+                              "yes","no")) %>% 
+  ungroup() %>% 
+  left_join(exact.coords,
+            by="PLT_CN")
+
+fia$COND <- fia$COND %>% 
+  left_join(fia$PLOT %>% 
+              select(PLT_CN,most.recent),
+            by="PLT_CN")
+
+# Because annual inventories began later in Wyoming, we need to link back to earlier period inventories in order to make our eventual change estimates. This code does that by using plot number links and tree azimuth and distance. 
+
+# Other data curation steps
+
+## creating some fields and updating all SPCDs to most-recently ID'd SPCD -- this is necessary because it's quite common for trees to change species ID, especially in smaller age classes.
+
+fia$TREE <- fia$TREE %>% 
+  left_join(fia$PLOT %>% 
+              select(PLT_CN,most.recent),
+            by="PLT_CN") %>% 
+  mutate(TRE_CN = CN,
+         DIA = DIA*2.54,
+         PREVDIA = PREVDIA*2.54,
+         agent_key = case_when(STATUSCD==2 & AGENTCD %in% c(00,70) ~ "unknown1",
+                               STATUSCD==2 & AGENTCD == 10 ~ "insect",
+                               STATUSCD==2 & AGENTCD == 20 ~ "disease",
+                               STATUSCD==2 & AGENTCD == 30 ~ "fire",
+                               STATUSCD==2 & AGENTCD == 40 ~ "animal",
+                               STATUSCD==2 & AGENTCD == 50 ~ "weather",
+                               STATUSCD==2 & AGENTCD == 60 ~ "competition",
+                               STATUSCD==2 & AGENTCD == 80 ~ "land use",
+                               STATUSCD==2 & is.na(AGENTCD) & 
+                                 (PREV_STATUS_CD==1 | 
+                                    is.na(PREV_STATUS_CD)) ~ "unknown2"),
+         insect.damage = case_when(DAMAGE_AGENT_CD1 >= 10000 &
+                                     DAMAGE_AGENT_CD1 < 19000 ~ 1,
+                                   DAMAGE_AGENT_CD2 >= 10000 &
+                                     DAMAGE_AGENT_CD2 < 19000 ~ 1,
+                                   DAMAGE_AGENT_CD3 >= 10000 &
+                                     DAMAGE_AGENT_CD3 < 19000 ~ 1,
+                                   TRUE ~ 0),
+         disease.damage = case_when(DAMAGE_AGENT_CD1 >= 20000 &
+                                      DAMAGE_AGENT_CD1 < 30000 ~ 1,
+                                    DAMAGE_AGENT_CD2 >= 20000 &
+                                      DAMAGE_AGENT_CD2 < 30000 ~ 1,
+                                    DAMAGE_AGENT_CD3 >= 20000 &
+                                      DAMAGE_AGENT_CD3 < 30000 ~ 1,
+                                    TRUE ~ 0),
+         other.damage = case_when(DAMAGE_AGENT_CD1 > 30000 ~ 1,
+                                  DAMAGE_AGENT_CD2 > 30000 ~ 1,
+                                  DAMAGE_AGENT_CD3 > 30000 ~ 1,
+                                  TRUE ~ 0)) %>% 
+  left_join(.,
+            fia$TREE %>% 
+              select(PREV_TRE_CN, SPCD) %>% 
+              rename(LATER_SPCD=SPCD),
+            by=c("TRE_CN"="PREV_TRE_CN")) %>% 
+  mutate(SPCD = case_when(SPCD!=LATER_SPCD & !is.na(LATER_SPCD) ~ LATER_SPCD,
+                          is.na(LATER_SPCD) ~ SPCD,
+                          TRUE ~ SPCD)) %>% 
+  left_join(.,
+            fia$PLOT %>% 
+              select(PLT_CN, MEASYEAR),
+            by="PLT_CN")
+
+```
+## Spatial data
+
+```{r}
+
+# WGS84
+old.proj <- "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"
+
+# Albers Equal Area; centered in western US
+base.proj <- "+proj=aea +lat_0=23 +lon_0=-96 +lat_1=29.5 +lat_2=45.5 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs"
+
+# US state boundaries
+states <- readOGR(dsn="/Users/DanielPerret/Box/01. daniel.perret Workspace/base_spatialdata/state_boundaries",
+                  layer = "state_boundaries", verbose=F) %>% 
+  spTransform(.,
+              CRSobj = CRS(base.proj))
+
+# North American continent
+cont <- readOGR(dsn="/Users/DanielPerret/Box/01. daniel.perret Workspace/base_spatialdata/continents",
+                layer = "na",
+                verbose=F,
+                p4s = old.proj) %>% 
+  spTransform(.,
+              CRSobj = CRS(base.proj))
+
+# Level 4 ecoregions (i.e., ecoregion subsections)
+er4 <- readOGR(dsn="/Users/DanielPerret/Box/01. daniel.perret Workspace/base_spatialdata/cleland_usfs_ecoregions",
+               layer = "S_USA.EcomapSubsections",
+               verbose=F) %>% 
+  spTransform(.,
+              CRSobj = CRS(base.proj))
+
+# Level 3 ecoregions (i.e., ecoregion sections)
+er3 <- readOGR(dsn="/Users/DanielPerret/Box/01. daniel.perret Workspace/base_spatialdata/cleland_usfs_ecoregions",
+               layer = "S_USA.EcomapSections",
+               verbose=F) %>% 
+  spTransform(.,
+              CRSobj = CRS(base.proj))
+
+# Level 2 ecoregions (i.e., ecological provinces)
+er2 <- readOGR(dsn="/Users/DanielPerret/Box/01. daniel.perret Workspace/base_spatialdata/cleland_usfs_ecoregions",
+               layer = "S_USA.EcoMapProvinces",
+               verbose=F) %>% 
+  spTransform(.,
+              CRSobj = CRS(base.proj))
+
+```
+
+# ADS data
+
+```{r}
+
+mpb.fp <- readOGR(dsn="/Users/DanielPerret/Box/01. daniel.perret Workspace/PROJECTS/plots-planes-pixels/data/ADS_data/shapefiles/",
+                  layer = "mpb_allyears_fp",
+                  verbose=F) %>% 
+  spTransform(.,
+              CRSobj = CRS(base.proj))
+
+mpb.all <- readOGR(dsn="/Users/DanielPerret/Box/01. daniel.perret Workspace/PROJECTS/plots-planes-pixels/data/ADS_data/shapefiles/",
+                   layer = "MPB_casestudy_2000_2016",
+                   verbose=F) %>% 
+  spTransform(.,
+              CRSobj = CRS(base.proj)) %>% 
+  sf::st_as_sf()
+
+```
+
+
+## ADS area time-series
+
+```{r}
+
+mpb.all %>% 
+  sf::st_drop_geometry() %>% 
+  group_by(SURVEY_YEA) %>% 
+  summarise(area = sum(ACRES)) %>% 
+  ggplot(.,aes(x = SURVEY_YEA,
+               y = area)) +
+  geom_line(lwd=2) +
+  labs(x = "Year",
+       y = "Acres of damage")
+
+
+```
+
+```{r}
+
+mpb.all %>% 
+  sf::st_drop_geometry() %>% 
+  group_by(SURVEY_YEA,HOST) %>% 
+  summarise(area = sum(ACRES)) %>% 
+  ggplot(.,aes(x = SURVEY_YEA,
+               y = area,
+               col = HOST)) +
+  geom_line(lwd=2) +
+  labs(x = "Year",
+       y = "Acres of damage")
+
+
+```
+
+## FIA timeseries
+
+```{r}
+
+in.mpb <- fia$PLOT %>% 
+  SpatialPointsDataFrame(coords = .[,c("LON","LAT")],
+                         data = .,
+                         proj4string = CRS(old.proj)) %>% 
+  spTransform(.,
+              CRSobj = CRS(base.proj))
+
+in.mpb <- in.mpb[mpb.fp,]
+
+mpb.plts <- in.mpb$PLT_CN
+
+fia$PLOT <- fia$PLOT %>% 
+  mutate(mpb = ifelse(PLT_CN %in% mpb.plts, 1, 0))
+
+fia$TREE <- fia$TREE %>% 
+  mutate(mpb = ifelse(PLT_CN %in% mpb.plts, 1, 0))
+
+```
+
+Annual area, no time component
+estimated with rFIA
+```{r}
+try <- rFIA::area(db=fia, 
+                  grpBy = c(MEASYEAR,AGENTCD),
+                  polys = mpb.fp) %>% 
+  filter(YEAR==2019)
+
+try %>% 
+  filter(AGENTCD==10) %>% 
+  ggplot(.,
+         aes(x=MEASYEAR,
+             y=AREA_TOTAL))+
+  geom_line(lwd=2) +
+  scale_x_continuous(breaks = 2010:2019, labels=2010:2019) +
+  labs(x = "Year", y = "Insect mortality area")
+
+```
+
+and here estimated using plot EXPNS
+
+```{r}
+# getting plot-level expansion factors by PLT_CN
+popinfo <- rFIA::getDesignInfo(fia,mostRecent = F,type="ALL") %>%
+  left_join(fia$POP_STRATUM %>% 
+              select(STRATUM_CN=CN,
+                     EXPNS),
+            by="STRATUM_CN") %>% 
+  group_by(PLT_CN) %>% 
+  filter(YEAR == max(YEAR))
+
+insect.plots <- fia$TREE %>% 
+  filter(mpb==1,AGENTCD==10) %>% 
+  pull(PLT_CN) %>% 
+  unique()
+
+## measured area
+fia$PLOT %>% 
+  left_join(popinfo %>% 
+              select(PLT_CN,EXPNS)) %>% 
+  filter(mpb==1) %>% 
+  group_by(MEASYEAR) %>% 
+  summarise(measured.area = sum(EXPNS,na.rm=T)) %>% 
+  ggplot(.,aes(x=MEASYEAR,
+               y=measured.area)) +
+  geom_line()
+c
+## mortality area
+fia$PLOT %>% 
+  left_join(popinfo %>% 
+              select(PLT_CN,EXPNS)) %>% 
+  filter(mpb==1,
+         PLT_CN %in% insect.plots) %>%
+  group_by(MEASYEAR) %>% 
+  summarise(area = sum(EXPNS,na.rm=T),
+            count=n()) %>% 
+  ggplot(.,aes(x=MEASYEAR,
+               y=area)) +
+  geom_line()
+
+```
+
+So, the big issue that I'm running into is that no AGENTCDs were recorded prior to 2010 -- basically, initial plot measurements had no agent codes assigned to mortality trees. This is problematic because ADS data indicates that the outbreak starts in 2006 -- we can't pick up any of that signal in the FIA data.
+
+An alternative is to see what information we can get from condition classes... I'll give that a shot next:
+
+```{r}
+dist.cond <- fia$COND %>% 
+  filter(PLT_CN %in% mpb.plts,
+         DSTRBCD1 %in% c(10:12)|
+           DSTRBCD2 %in% c(10:12)|
+           DSTRBCD3 %in% c(10:12))
+
+dist.plt <- dist.cond %>% pull(PLT_CN) %>% unique()
+
+
+## mortality area
+fia$PLOT %>% 
+  left_join(popinfo %>% 
+              select(PLT_CN,EXPNS)) %>% 
+  filter(mpb==1,
+         PLT_CN %in% dist.plt) %>%
+  group_by(MEASYEAR) %>% 
+  summarise(area = sum(EXPNS,na.rm=T),
+            count=n()) %>% 
+  ggplot(.,aes(x=MEASYEAR,
+               y=area)) +
+  geom_line()
+
+
+
+```
+
+next adjust for disturbance year rather than measure year...
+I could also do this by using rFIA::area with DSTRBCD1 %in% c(10:12), for example...
+
+
+```{r}
+
+try2 <- growMort_dlp.metric(db = fia,
+                            grpBy = MEASYEAR,
+                            polys = mpb.fp,
+                            sizeThresh = 2.54,
+                            evals = c(41903,411903),
+                            totals = T) %>% 
+  filter(YEAR == 2019)
+
+
+
+```
+
+same thing just with DSTRBCD areas
+
+```{r}
+try <- rFIA::area(db=fia, 
+                  areaDomain = DSTRBCD1 %in% c(10:12),
+                  grpBy = c(DSTRBYR1),
+                  polys = mpb.fp) %>% 
+  group_by(DSTRBYR1) %>% 
+  filter(YEAR == max(YEAR),
+         DSTRBYR1<9999)
+
+try %>% 
+  ggplot(.,
+         aes(x=DSTRBYR1,
+             y=AREA_TOTAL))+
+  geom_line(lwd=2) +
+  scale_x_continuous(breaks = 2000:2019, labels=2000:2019) +
+  labs(x = "Year", y = "Insect mortality area")
+
+```
+
+
+
