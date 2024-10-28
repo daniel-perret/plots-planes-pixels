@@ -69,7 +69,7 @@ From Danny:
 
 This is the approximate footprint that Danny gave us. I pulled all ADS data from the years 2000-2016 from the area, and grabbed all polygons that were attributed to mountain pine beetle (DCA_CODE == 11006). This yielded \~14,500 polygons covering roughly 700,000 ha:
 
-![](images/mpb_adsmap.jpg)
+![](figures/mpb_adsmap.jpg)
 
 ## Setup code {.tabset}
 
@@ -84,13 +84,13 @@ old.proj <- "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"
 base.proj <- "+proj=aea +lat_0=23 +lon_0=-96 +lat_1=29.5 +lat_2=45.5 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs"
 
 mpb.fp <- readOGR(dsn="/Users/DanielPerret/Box/01. daniel.perret Workspace/PROJECTS/plots-planes-pixels/data/ADS_data/shapefiles/",
-                  layer = "mpb_allyears_fp",
+                  layer = "MPB2_malh_fp",
                   verbose=F) %>% 
   spTransform(.,
               CRSobj = CRS(base.proj))
 
 mpb.all <- readOGR(dsn="/Users/DanielPerret/Box/01. daniel.perret Workspace/PROJECTS/plots-planes-pixels/data/ADS_data/shapefiles/",
-                   layer = "MPB_casestudy_2000_2016",
+                   layer = "MPB2_malh_2011_2019",
                    verbose=F) %>% 
   spTransform(.,
               CRSobj = CRS(base.proj)) %>% 
@@ -363,9 +363,9 @@ rFIA::tpa(db = fia,
   group_by(MEASYEAR) %>% 
   filter(YEAR == max(YEAR)) %>% 
   select(MEASYEAR,TPA, TPA_SE) %>% 
-  bind_rows(data.frame(MEASYEAR = c(2000:2005,2007,2008,2010),
-                       TPA = 0,
-                       TPA_SE = 0)) %>% 
+  # bind_rows(data.frame(MEASYEAR = c(2011:2019),
+  #                      TPA = 0,
+  #                      TPA_SE = 0)) %>% 
   ggplot(.,
          aes(x = MEASYEAR,
              y = TPA)) +
@@ -413,7 +413,8 @@ fia$PLOT %>%
   summarise(area = sum(EXPNS,na.rm=T),
             count=n()) %>% 
   select(MEASYEAR, area) %>% 
-  bind_rows(data.frame(MEASYEAR = c(2000:2005,2007,2008,2010), area = 0)) %>% 
+  filter(MEASYEAR>2000) %>% 
+  #bind_rows(data.frame(MEASYEAR = c(2000:2005,2007,2008,2010), area = 0)) %>% 
   ggplot(.,aes(x=MEASYEAR,
                y=area)) +
   geom_line(lwd=2) +
@@ -432,13 +433,14 @@ ggplot() +
   geom_sf(data=mpb.fp %>% sf::st_as_sf(),
           fill = "lightgray")+
   geom_sf(data=mpb.all %>% 
-            mutate(MEASYEAR = SURVEY_YEA),
-          #aes(fill = factor(MEASYEAR),
-            fill = "dodgerblue2",
+            mutate(MEASYEAR = SURVEY_YEA) %>% 
+            filter(MEASYEAR>2010),
+          aes(fill = LEGACY_TPA),
+            # fill = "dodgerblue2",
           col = NA, alpha = 0.6) +
-  geom_sf(data = in.mpb %>% sf::st_as_sf(),
+  geom_sf(data = in.mpb %>% sf::st_as_sf() %>% filter(MEASYEAR>2010),
           col = "black", alpha = 0.2) +
-  geom_sf(data = in.mpb %>% sf::st_as_sf() %>% filter(PLT_CN%in%insect.plots),
+  geom_sf(data = in.mpb %>% sf::st_as_sf() %>% filter(PLT_CN%in%insect.plots,MEASYEAR>2010),
           col = "red") +
   facet_wrap(facets=~MEASYEAR)
 
@@ -455,14 +457,14 @@ So most insect disturbance conditions are assigned a DSTRBYR = 9999, which indic
 ```{r}
 dist.cond <- fia$COND %>% 
   filter(PLT_CN %in% mpb.plts,
-         DSTRBCD1 %in% c(10:12)#|
-           #DSTRBCD2 %in% c(10:12)|
-           #DSTRBCD3 %in% c(10:12)
+         DSTRBCD1 %in% c(10:12)|
+           DSTRBCD2 %in% c(10:12)|
+           DSTRBCD3 %in% c(10:12)
          ) %>% 
-  mutate(DSTYR = case_when(DSTRBCD1 %in% c(10:12) ~ DSTRBYR1#,
-                           #DSTRBCD2 %in% c(10:12) ~ DSTRBYR2,
-                           #DSTRBCD3 %in% c(10:12) ~ DSTRBYR3)
-                           ))
+  mutate(DSTYR = case_when(DSTRBCD1 %in% c(10:12) ~ DSTRBYR1,
+                           DSTRBCD2 %in% c(10:12) ~ DSTRBYR2,
+                           DSTRBCD3 %in% c(10:12) ~ DSTRBYR3)
+                           )
 
 dist.plt <- dist.cond %>% 
   group_by(PLT_CN) %>% 
@@ -475,6 +477,7 @@ fia$PLOT %>%
               select(PLT_CN,EXPNS)) %>% 
   filter(mpb==1, PLT_CN %in% dist.plt$PLT_CN) %>%
   left_join(dist.plt, by = "PLT_CN") %>% 
+  filter(MEASYEAR %in% c(2011:2019)) %>% 
   group_by(MEASYEAR) %>% 
   summarise(area = sum(EXPNS*DSTPROP,na.rm=T),
             count=n()) %>% 
