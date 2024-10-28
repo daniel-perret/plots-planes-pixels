@@ -484,7 +484,7 @@ for(i in 1:length(names(klam.pred))){
 }
 
 klam.err <- klam.nbri[[which(names(klam.nbri) %in% paste0("X",years,"_nbri"))]]
-names(klam.err) <- paste0(years,"_dbah")
+names(klam.err) <- paste0(years,"_se")
 for(i in 1:length(names(klam.err))){
   
   year <- years[i]
@@ -496,7 +496,7 @@ for(i in 1:length(names(klam.err))){
               mutate(case="klam"),
             se.fit = T,
             re.form = NA) %>% 
-    as.data.frame()
+    as.data.frame() %>% 
     pull(se.fit)
   
   klam.err[[i]][is.na(klam.cause[[paste0("cause_",year)]][])] <- NA
