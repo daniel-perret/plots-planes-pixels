@@ -12,3 +12,8 @@ klam.cause <- stack("/Users/DanielPerret/Box/PlotsPlanesPixels/data/LCMS/klam_ca
 for(i in 1:length(names(klam.cause))){
   klam.cause[[i]][!klam.cause[[i]][]%in%15:16] <- NA
 }
+
+psme.cause <- stack("/Users/DanielPerret/Box/PlotsPlanesPixels/data/LCMS/psme_causeofchange_annual.tif")
+for(i in 1:length(names(psme.cause))){
+  psme.cause[[i]][!psme.cause[[i]][]%in%10:12] <- NA
+}

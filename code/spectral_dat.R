@@ -16,6 +16,92 @@ names(klam.nbri) <- paste0(names(klam.nbri), "_nbri")
 
 ## (2) extract timeseries for every FIA plot in footprint
 
+### FIA data
+
+fia <- readFIA(dir = "/Users/DanielPerret/Box/01. daniel.perret Workspace/PROJECTS/plots-planes-pixels/data/FIA/",
+               common=T, states=c("OR"))
+
+fia <- readFIA(dir = "/Users/DanielPerret/Box/01. daniel.perret Workspace/fia_data_082123/",
+               common=T, states=c("OR"))
+
+exact.coords <- read.csv("D:/coords_format.csv",header=T) %>% 
+  select(PLT_CN = ID1,
+         LAT_EXACT = lat,
+         LON_EXACT = long)
+
+#creating some fields in various tables
+
+fia$PLOT <- fia$PLOT %>% 
+  mutate(pltID = paste(UNITCD,STATECD,COUNTYCD,PLOT,sep="_"),
+         PLT_CN = CN,
+         ECOSUBCD = trimws(ECOSUBCD)) %>% 
+  group_by(pltID) %>% 
+  mutate(most.recent = ifelse(MEASYEAR==max(MEASYEAR),
+                              "yes","no")) %>% 
+  ungroup() %>% 
+  left_join(exact.coords,
+            by="PLT_CN")
+
+fia$COND <- fia$COND %>% 
+  left_join(fia$PLOT %>% 
+              select(PLT_CN,most.recent),
+            by="PLT_CN")
+
+fia$TREE <- fia$TREE %>% 
+  left_join(fia$PLOT %>% 
+              select(PLT_CN,most.recent),
+            by="PLT_CN") %>% 
+  mutate(TRE_CN = CN,
+         DIA = DIA*2.54,
+         PREVDIA = PREVDIA*2.54,
+         agent_key = case_when(STATUSCD==2 & AGENTCD %in% c(00,70) ~ "unknown1",
+                               STATUSCD==2 & AGENTCD == 10 ~ "insect",
+                               STATUSCD==2 & AGENTCD == 20 ~ "disease",
+                               STATUSCD==2 & AGENTCD == 30 ~ "fire",
+                               STATUSCD==2 & AGENTCD == 40 ~ "animal",
+                               STATUSCD==2 & AGENTCD == 50 ~ "weather",
+                               STATUSCD==2 & AGENTCD == 60 ~ "competition",
+                               STATUSCD==2 & AGENTCD == 80 ~ "land use",
+                               STATUSCD==2 & is.na(AGENTCD) & 
+                                 (PREV_STATUS_CD==1 | 
+                                    is.na(PREV_STATUS_CD)) ~ "unknown2"),
+         insect.damage = case_when(DAMAGE_AGENT_CD1 >= 10000 &
+                                     DAMAGE_AGENT_CD1 < 19000 ~ 1,
+                                   DAMAGE_AGENT_CD2 >= 10000 &
+                                     DAMAGE_AGENT_CD2 < 19000 ~ 1,
+                                   DAMAGE_AGENT_CD3 >= 10000 &
+                                     DAMAGE_AGENT_CD3 < 19000 ~ 1,
+                                   TRUE ~ 0),
+         disease.damage = case_when(DAMAGE_AGENT_CD1 >= 20000 &
+                                      DAMAGE_AGENT_CD1 < 30000 ~ 1,
+                                    DAMAGE_AGENT_CD2 >= 20000 &
+                                      DAMAGE_AGENT_CD2 < 30000 ~ 1,
+                                    DAMAGE_AGENT_CD3 >= 20000 &
+                                      DAMAGE_AGENT_CD3 < 30000 ~ 1,
+                                    TRUE ~ 0),
+         other.damage = case_when(DAMAGE_AGENT_CD1 > 30000 ~ 1,
+                                  DAMAGE_AGENT_CD2 > 30000 ~ 1,
+                                  DAMAGE_AGENT_CD3 > 30000 ~ 1,
+                                  TRUE ~ 0)) %>% 
+  left_join(.,
+            fia$TREE %>% 
+              select(PREV_TRE_CN, SPCD) %>% 
+              rename(LATER_SPCD=SPCD),
+            by=c("TRE_CN"="PREV_TRE_CN")) %>% 
+  mutate(SPCD = case_when(SPCD!=LATER_SPCD & !is.na(LATER_SPCD) ~ LATER_SPCD,
+                          is.na(LATER_SPCD) ~ SPCD,
+                          TRUE ~ SPCD)) %>% 
+  left_join(.,
+            fia$PLOT %>% 
+              select(PLT_CN, MEASYEAR),
+            by="PLT_CN")
+
+spcd.ref <- read.csv("/Users/DanielPerret/Box/01. daniel.perret Workspace/FIADB_REFERENCE/REF_SPECIES.csv")
+
+fia$TREE <- fia$TREE %>% 
+  left_join(., spcd.ref %>% select(SPCD,COMMON_NAME))
+
+
 ### reading shapefiles for case study AOIs
 
 #### WGS84
@@ -25,17 +111,10 @@ old.proj <- "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"
 base.proj <- "+proj=aea +lat_0=23 +lon_0=-96 +lat_1=29.5 +lat_2=45.5 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs"
 
 #### shps
-malh.fp <- readOGR(dsn = "/Users/DanielPerret/Box/PlotsPlanesPixels/data/MPB_casestudy/malheur/",
-                   layer = "MPB2_malh_fp",
-                   verbose = F) %>% 
-  spTransform(.,
-              CRSobj = CRS(base.proj))
 
-klam.fp <- readOGR(dsn = "/Users/DanielPerret/Box/PlotsPlanesPixels/data/MPB_casestudy/klamath/",
-                   layer = "mpb_allyears_fp",
-                   verbose = F) %>% 
-  spTransform(.,
-              CRSobj = CRS(base.proj))
+malh.fp <- sf::read_sf("/Users/DanielPerret/Box/PlotsPlanesPixels/data/MPB_casestudy/malheur/MPB2_malh_fp.shp") %>% sf::st_transform(base.proj)
+
+klam.fp <- sf::read_sf("/Users/DanielPerret/Box/PlotsPlanesPixels/data/MPB_casestudy/klamath/mpb_allyears_fp.shp") %>% sf::st_transform(base.proj)
 
 ### making dataframe of FIA plots for each case study
 
@@ -56,21 +135,25 @@ fia$PLOT$LAT <- fia$PLOT$LAT_EXACT
 
 ### extractions
 
-malh.extract <-  raster::extract(malh.ndvi, malh.fia, df=T, sp=T, buffer=45,fun=mean) %>% 
-  sf::st_as_sf() %>% 
-  left_join(raster::extract(malh.nbri, malh.fia, df=T, sp=T, buffer=45,fun=mean) %>% 
-              sf::st_as_sf() %>% 
-              sf::st_drop_geometry() %>% 
-              select(PLT_CN,contains("nbri")),
-            by = "PLT_CN") 
+load("data/malh_extract_22oct.Rdata")
+load("data/klam_extract22oct.Rdata")
 
-klam.extract <-  raster::extract(klam.ndvi, klam.fia, df=T, sp=T, buffer=45,fun=mean) %>% 
-  sf::st_as_sf() %>% 
-  left_join(raster::extract(klam.nbri, klam.fia, df=T, sp=T, buffer=45,fun=mean) %>% 
-              sf::st_as_sf() %>% 
-              sf::st_drop_geometry() %>% 
-              select(PLT_CN,contains("nbri")),
-            by = "PLT_CN") 
+# 
+# malh.extract <-  raster::extract(malh.ndvi, malh.fia, df=T, sp=T, buffer=45,fun=mean) %>% 
+#   sf::st_as_sf() %>% 
+#   left_join(raster::extract(malh.nbri, malh.fia, df=T, sp=T, buffer=45,fun=mean) %>% 
+#               sf::st_as_sf() %>% 
+#               sf::st_drop_geometry() %>% 
+#               select(PLT_CN,contains("nbri")),
+#             by = "PLT_CN") 
+# 
+# klam.extract <-  raster::extract(klam.ndvi, klam.fia, df=T, sp=T, buffer=45,fun=mean) %>% 
+#   sf::st_as_sf() %>% 
+#   left_join(raster::extract(klam.nbri, klam.fia, df=T, sp=T, buffer=45,fun=mean) %>% 
+#               sf::st_as_sf() %>% 
+#               sf::st_drop_geometry() %>% 
+#               select(PLT_CN,contains("nbri")),
+#             by = "PLT_CN") 
 
 
 ## (3) calculate annual difference for year prior to FIA plot remeasurement
@@ -78,39 +161,41 @@ klam.extract <-  raster::extract(klam.ndvi, klam.fia, df=T, sp=T, buffer=45,fun=
 
 malh.extract2 <- malh.extract %>% 
   mutate(YEAR2 = MEASYEAR,
-         YEAR1 = round(MEASYEAR-REMPER)) %>%
-  select(PLT_CN,YEAR1,YEAR2,MEASYEAR,REMPER,
+         YEAR1 = as.integer(round(MEASYEAR-REMPER))) %>%
+  select(PLT_CN,YEAR1,YEAR2,REMPER,
          contains("ndvi")) %>% 
   pivot_longer(cols = c(contains("ndvi")),
                names_to = "year",
                values_to = "ndvi") %>% 
-  mutate(year = substr(year, start=2, stop = 5)) %>% 
+  mutate(year = as.integer(substr(year, start=2, stop = 5))) %>% 
   left_join(malh.extract %>% 
               sf::st_drop_geometry() %>% 
               mutate(YEAR2 = MEASYEAR,
-                     YEAR1 = round(MEASYEAR-REMPER)) %>%
-              select(PLT_CN,YEAR1,YEAR2,MEASYEAR,REMPER,
+                     YEAR1 = as.integer(round(MEASYEAR-REMPER))) %>%
+              select(PLT_CN,YEAR1,YEAR2,REMPER,
                      contains("nbri")) %>% 
               pivot_longer(cols = c(contains("nbri")),
                            names_to = "year",
                            values_to = "nbri") %>% 
-              mutate(year = substr(year, start=2, stop = 5)),
-            by=c("PLT_CN","REMPER","YEAR1","YEAR2","MEASYEAR","year")) %>% 
-  filter(!is.na(REMPER)) %>% 
-  group_by(PLT_CN) %>%   
+              mutate(year = as.integer(substr(year, start=2, stop = 5))),
+            by=c("PLT_CN","REMPER","YEAR1","YEAR2","year")) %>% 
+  filter(!is.na(REMPER)) %>% sf::st_drop_geometry() %>% 
+  ungroup() %>% 
+  rowwise() %>% 
   filter(year %in% YEAR1:YEAR2) %>% 
+  group_by(PLT_CN) %>%   
   mutate(d_ndvi = ndvi - lag(ndvi),
          d_nbri = nbri - lag(nbri),
          di_ndvi = ndvi - first(ndvi),
          di_nbri = nbri - first(nbri)) %>%
   ungroup() %>% 
-  mutate(ndvi_t2 = ifelse(year == MEASYEAR,ndvi,0),
-         nbri_t2 = ifelse(year == MEASYEAR,nbri,0),
+  mutate(ndvi_t2 = ifelse(year == YEAR2,ndvi,0),
+         nbri_t2 = ifelse(year == YEAR2,nbri,0),
          ndvi_t1 = ifelse(year == YEAR1,ndvi,0),
          nbri_t1 = ifelse(year == YEAR1,nbri,0),
-         d_ndvi_ann = ifelse(year == MEASYEAR,d_ndvi,0),
-         d_nbri_ann = ifelse(year == MEASYEAR,d_nbri,0)) %>% 
-  group_by(PLT_CN,YEAR1,YEAR2,REMPER,MEASYEAR) %>% 
+         d_ndvi_ann = ifelse(year == YEAR2,d_ndvi,0),
+         d_nbri_ann = ifelse(year == YEAR2,d_nbri,0)) %>% 
+  group_by(PLT_CN,YEAR1,YEAR2,REMPER) %>% 
   summarise(ndvi_t2 = sum(ndvi_t2),
             nbri_t2 = sum(nbri_t2),
             ndvi_t1 = sum(ndvi_t1),
@@ -147,8 +232,10 @@ klam.extract2 <- klam.extract %>%
               mutate(year = substr(year, start=2, stop = 5)),
             by=c("PLT_CN","REMPER","YEAR1","YEAR2","MEASYEAR","year")) %>% 
   filter(!is.na(REMPER)) %>% 
-  group_by(PLT_CN) %>%   
+  ungroup() %>% 
+  rowwise() %>% 
   filter(year %in% YEAR1:YEAR2) %>% 
+  group_by(PLT_CN) %>%
   mutate(d_ndvi = ndvi - lag(ndvi),
          d_nbri = nbri - lag(nbri),
          di_ndvi = ndvi - first(ndvi),
@@ -184,21 +271,22 @@ klam.extract2 <- klam.extract %>%
 thresh <- 12.7
 
 ### tpa mortality
-malh.est.tph <- growMort_dlp.metric(db = fia,
-                                    polys = malh.fp,
-                                    byPlot = T,
-                                    returnSpatial = F,
-                                    sizeThresh = thresh,
-                                    evals = c(41903, 411903),
-                                    totals = T)
-
-klam.est.tph <- growMort_dlp.metric(db = fia,
-                                    polys = klam.fp,
-                                    byPlot = T, 
-                                    returnSpatial = F,
-                                    sizeThresh = thresh,
-                                    evals = c(41903, 411903),
-                                    totals = T)
+# malh.est.tph <- growMort_dlp.metric(db = fia,
+#                                     polys = malh.fp %>% 
+#                                       sf::st_as_sf(),
+#                                     byPlot = T,
+#                                     returnSpatial = T,
+#                                     sizeThresh = thresh,
+#                                     evals = c(41903, 411903),
+#                                     totals = T)
+# 
+# klam.est.tph <- growMort_dlp.metric(db = fia,
+#                                     polys = klam.fp,
+#                                     byPlot = T, 
+#                                     returnSpatial = F,
+#                                     sizeThresh = thresh,
+#                                     evals = c(41903, 411903),
+#                                     totals = T)
 
 ### bah mortality
 malh.est.bah <- growMort_dlp.metric(db = fia,
@@ -220,67 +308,67 @@ klam.est.bah <- growMort_dlp.metric(db = fia,
                                     totals = T)
 
 ### insect specific estimates
-
-malh.est.agent <- growMort_dlp.metric(db = fia,
-                                    polys = malh.fp,
-                                    byPlot = T,
-                                    grpBy = agent_key,
-                                    returnSpatial = F,
-                                    sizeThresh = thresh,
-                                    stateVar = "BAA",
-                                    evals = c(41903, 411903),
-                                    totals = T) %>% 
-  filter(agent_key == "insect") %>% 
-  group_by(PLT_CN) %>% 
-  filter(YEAR == max(YEAR)) %>% 
-  ungroup()
-
-klam.est.agent <- growMort_dlp.metric(db = fia,
-                                    polys = klam.fp,
-                                    byPlot = T, 
-                                    grpBy = agent_key,
-                                    returnSpatial = F,
-                                    sizeThresh = thresh,
-                                    stateVar = "BAA",
-                                    evals = c(41903, 411903),
-                                    totals = T)
-
-### trying a new one to get at change in dead tree basal area
-
-malh.est.dead <- growMort_dlp.metric(db = fia,
-                                    polys = malh.fp,
-                                    byPlot = T,
-                                    grpBy = STATUSCD,
-                                    returnSpatial = F,
-                                    sizeThresh = thresh,
-                                    stateVar = "BAA",
-                                    evals = c(41903, 411903),
-                                    totals = T) %>% 
-  filter(STATUSCD == 2)
-
-klam.est.dead <- growMort_dlp.metric(db = fia,
-                                    polys = klam.fp,
-                                    byPlot = T, 
-                                    grpBy = STATUSCD,
-                                    returnSpatial = F,
-                                    sizeThresh = thresh,
-                                    stateVar = "BAA",
-                                    evals = c(41903, 411903),
-                                    totals = T)
+# 
+# malh.est.agent <- growMort_dlp.metric(db = fia,
+#                                     polys = malh.fp,
+#                                     byPlot = T,
+#                                     grpBy = agent_key,
+#                                     returnSpatial = F,
+#                                     sizeThresh = thresh,
+#                                     stateVar = "BAA",
+#                                     evals = c(41903, 411903),
+#                                     totals = T) %>% 
+#   filter(agent_key == "insect") %>% 
+#   group_by(PLT_CN) %>% 
+#   filter(YEAR == max(YEAR)) %>% 
+#   ungroup()
+# 
+# klam.est.agent <- growMort_dlp.metric(db = fia,
+#                                     polys = klam.fp,
+#                                     byPlot = T, 
+#                                     grpBy = agent_key,
+#                                     returnSpatial = F,
+#                                     sizeThresh = thresh,
+#                                     stateVar = "BAA",
+#                                     evals = c(41903, 411903),
+#                                     totals = T)
+# 
+# ### trying a new one to get at change in dead tree basal area
+# 
+# malh.est.dead <- growMort_dlp.metric(db = fia,
+#                                     polys = malh.fp,
+#                                     byPlot = T,
+#                                     grpBy = STATUSCD,
+#                                     returnSpatial = F,
+#                                     sizeThresh = thresh,
+#                                     stateVar = "BAA",
+#                                     evals = c(41903, 411903),
+#                                     totals = T) %>% 
+#   filter(STATUSCD == 2)
+# 
+# klam.est.dead <- growMort_dlp.metric(db = fia,
+#                                     polys = klam.fp,
+#                                     byPlot = T, 
+#                                     grpBy = STATUSCD,
+#                                     returnSpatial = F,
+#                                     sizeThresh = thresh,
+#                                     stateVar = "BAA",
+#                                     evals = c(41903, 411903),
+#                                     totals = T)
 
 ##
 
 # filtering to exclude plots impacted by fire, etc
 
 malh.plts <- malh.est.bah %>% pull(PLT_CN)
-
-malh.filt1 <- fia$COND %>% 
-  filter(PLT_CN %in% malh.plts,
-         !DSTRBCD1 %in% 30:32 |
-         DSTRBCD2 %in% 30:32 |
-         DSTRBCD3 %in% 30:32,
-         !TRTCD1 %in% 10:50) %>% 
-  pull(PLT_CN) %>% unique()
+# 
+# malh.filt1 <- fia$COND %>% 
+#   filter(PLT_CN %in% malh.plts,
+#          !DSTRBCD1 %in% 30:32 |
+#          DSTRBCD2 %in% 30:32 |
+#          DSTRBCD3 %in% 30:32,
+#          !TRTCD1 %in% 10:50) %>% 
+#   pull(PLT_CN) %>% unique()
   
 malh.filt2 <- fia$COND %>% 
   filter(PLT_CN %in% malh.plts,
@@ -288,33 +376,33 @@ malh.filt2 <- fia$COND %>%
            DSTRBCD2 %in% 10:12 |
            DSTRBCD3 %in% 10:12) %>% 
   pull(PLT_CN) %>% unique()
-
-malh.filt3 <- fia$TREE %>%
-  filter(PLT_CN %in% malh.plts,
-         agent_key == "insect") %>%
-  pull(PLT_CN) %>% unique()
-
+# 
+# malh.filt3 <- fia$TREE %>%
+#   filter(PLT_CN %in% malh.plts,
+#          agent_key == "insect") %>%
+#   pull(PLT_CN) %>% unique()
+# 
 klam.plts <- klam.est.bah %>% pull(PLT_CN)
-
-klam.filt1 <- fia$COND %>% 
-  filter(PLT_CN %in% klam.plts,
-         !DSTRBCD1 %in% 30:32 |
-         DSTRBCD2 %in% 30:32 |
-         DSTRBCD3 %in% 30:32,
-         !TRTCD1 %in% 10:50) %>% 
-  pull(PLT_CN) %>% unique()
-  
-klam.filt2 <- fia$COND %>% 
+# 
+# klam.filt1 <- fia$COND %>% 
+#   filter(PLT_CN %in% klam.plts,
+#          !DSTRBCD1 %in% 30:32 |
+#          DSTRBCD2 %in% 30:32 |
+#          DSTRBCD3 %in% 30:32,
+#          !TRTCD1 %in% 10:50) %>% 
+#   pull(PLT_CN) %>% unique()
+#   
+klam.filt2 <- fia$COND %>%
   filter(PLT_CN %in% klam.plts,
          DSTRBCD1 %in% 10:12 |
            DSTRBCD2 %in% 10:12 |
-           DSTRBCD3 %in% 10:12) %>% 
+           DSTRBCD3 %in% 10:12) %>%
   pull(PLT_CN) %>% unique()
-
-klam.filt3 <- fia$TREE %>%
-  filter(PLT_CN %in% klam.plts,
-         agent_key == "insect") %>%
-  pull(PLT_CN) %>% unique()
+# 
+# klam.filt3 <- fia$TREE %>%
+#   filter(PLT_CN %in% klam.plts,
+#          agent_key == "insect") %>%
+#   pull(PLT_CN) %>% unique()
 
 ## building model ----
 

@@ -733,9 +733,9 @@ growMortStarter_dlp.metric <- function(x,
       aEst <- eu.sums$y
       
       ## Have to repeat this with tree totals as the denominator
-      eu.sums <- rFIA:::sumToEU(db, 
-                                dplyr::select(tPlt, -c(tPlot, pPlot)), 
-                                dplyr::select(tPlt, -c(rPlot, mPlot, hPlot, gPlot, cPlot, tPlot)), 
+      eu.sums <- rFIA:::sumToEU(db,
+                                dplyr::select(tPlt, -c(tPlot, pPlot)),
+                                dplyr::select(tPlt, -c(rPlot, mPlot, hPlot, gPlot, cPlot, tPlot)),
                                 pops, grpBy, grpBy, method)
       
       ttEst <- eu.sums$x %>%

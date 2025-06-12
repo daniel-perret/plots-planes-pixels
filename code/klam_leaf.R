@@ -74,3 +74,17 @@ saveWidget(widget = leafmap,
            file = "klam_mpb_102524.html",
            selfcontained = TRUE)
 
+### making jpeg maps to turn into a gif
+
+
+
+
+
+
+
+
+
+
+
+
+

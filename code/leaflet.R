@@ -61,8 +61,8 @@ leafmap <- leafmap %>%
   ) %>% 
   addLegend(pal = pred.pal, values = values(malh.pred), 
             title = "BAH CHANGE", position = "topright") %>% 
-  addLegend(pal = err.pal, values = values(malh.pred), 
-            title = "PREDICTION SE", position = "topright") %>% 
+  # addLegend(pal = err.pal, values = values(malh.pred), 
+  #           title = "PREDICTION SE", position = "topright") %>% 
   hideGroup(c(paste0(c("BAH ","SE ", "ADS "), rep(years,each=3)))) %>% 
   addMouseCoordinates()
 

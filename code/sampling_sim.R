@@ -1,11 +1,12 @@
-
-prop.impact <- 0.02
+prop.impact <- 0.0026
+n.impact <- 2.8
 prop.sample <- 0.1
-n.plots <- 100
+n.plots <- 1087
 
 dat <- data.frame(id = 1:n.plots,
                   impact = 0)
-dat$impact[sample(1:n.plots, size = n.plots*prop.impact)] <- 1
+dat$impact[sample(1:n.plots, size = round(n.plots*prop.impact))] <- 1
+#dat$impact[sample(1:n.plots, size = n.impact)] <- 1
 
 out.det <- c()
 out.imp <- c()
@@ -24,7 +25,11 @@ for(i in 1:10000){
     if(det==0) {iter.det <- iter.det+1}
     if(imp==0) {iter.imp <- iter.imp+1}
     
-    samp <- sample(rows, size = n.plots*prop.sample)
+    if(length(rows)>round(n.plots*prop.sample)){
+          samp <- sample(rows, size = round(n.plots*prop.sample))
+    } else {
+      samp <- rows
+    }
     
     if(sum(dat$impact[samp])>0) {
       
@@ -34,7 +39,7 @@ for(i in 1:10000){
       
       rows <- rows[-which(rows%in%samp)]
       
-      if(sum >= prop.impact*n.plots){
+      if(sum >= round(prop.impact*n.plots)){
         imp <- 1
       }
       
@@ -53,8 +58,33 @@ for(i in 1:10000){
 }
 
 hist(out.det)
-hist(out.imp)
+#hist(out.imp)
 
 mean(out.det)
-mean(out.imp)
+#mean(out.imp)
+
+
+data.frame(yr = out.det) %>% 
+  ggplot() +
+  geom_histogram(aes(x = yr),
+                 bins = 10,
+                 fill = "gray65") +
+  scale_x_continuous(breaks = 1:10) +
+  labs(x = "Years until detection",
+       y = "Count") +
+  geom_vline(xintercept = mean(out.det),
+             col = "red", lwd = 1.7)
+  
+
+
+
+
+
+
+
+
+
+
+
+
 
