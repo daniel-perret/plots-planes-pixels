@@ -9,6 +9,7 @@ library(lme4)
 library(ggmap)
 library(ggplot2)
 library(sp)
+library(tidyterra)
 
 # setting my preferred ggplot2 theme
 theme_set(theme_bw())
@@ -129,10 +130,11 @@ ocho.extract2 <- ocho.extract %>%
   mutate(YEAR2 = MEASYEAR,
          YEAR1 = as.integer(round(MEASYEAR-REMPER))) %>%
   select(PLT_CN,YEAR1,YEAR2,REMPER,
-         contains("X")) %>% 
+         contains("X")) %>%
+  select(-LAT_EXACT, -LON_EXACT, -SUBP_EXAMINE_CD) %>% 
   pivot_longer(cols = c(contains("X")),
                names_to = "year",
-               values_to = "nbri") %>% 
+               values_to = "nbri") %>%
   mutate(year = as.integer(substr(year, start=2, stop = 5))) %>% 
   filter(!is.na(REMPER)) %>% sf::st_drop_geometry() %>% 
   ungroup() %>% 
@@ -168,7 +170,7 @@ ocho.extract2 <- ocho.extract %>%
 
 # just PSME mortality here
 est <- rFIA::growMort(db = fia,
-                      polys = psme.fp,
+                      polys = ocho.fp,
                       byPlot = T, bySpecies = T,
                       returnSpatial = F,
                       treeDomain = DIA>5,
@@ -178,32 +180,31 @@ est <- rFIA::growMort(db = fia,
   filter(YEAR == max(YEAR)) %>% 
   ungroup()
 
-psme.est.bah <- est %>% 
-  filter(SPCD == 202) %>% 
-  left_join(est %>% 
-              group_by(pltID) %>% 
-              mutate(psme = ifelse(SPCD==202,1,0)) %>% 
-              summarise(PSME.prop = sum(PREV_BAA*psme)/sum(PREV_BAA),
-                        other.BAA = sum(PREV_BAA)-sum(PREV_BAA*psme),
-                        all.BAA = sum(PREV_BAA),
-                        all.BAA.curr = sum(CURR_BAA),
-                        all.BAA.prev = sum(PREV_BAA),
-                        all.CHNG_BAA = sum(CHNG_BAA))) %>% 
-  mutate(CHNG_PERC_psme = (CURR_BAA-PREV_BAA)/(all.BAA))
-
-
-
+abies.est.bah <- est %>% 
+  mutate(abies = ifelse(SPCD%in%c(15,17,19,22,202),
+                        1,0)) %>% 
+  group_by(pltID) %>% 
+  summarise(abies.prop.prev = sum(PREV_BAA*abies)/sum(PREV_BAA),
+            abies.prop.curr = sum(CURR_BAA*abies)/sum(CURR_BAA),
+            abies.CHNG_BAA = sum(CHNG_BAA*abies),
+            other.BAA = sum(PREV_BAA)-sum(PREV_BAA*abies),
+            all.BAA = sum(PREV_BAA),
+            all.BAA.curr = sum(CURR_BAA),
+            all.BAA.prev = sum(PREV_BAA),
+            all.CHNG_BAA = sum(CHNG_BAA),
+            YEAR = first(YEAR),
+            PLT_CN = first(PLT_CN))
 
 # The condition-class filter gives very few hits, probably because the mortality is consistently at a pretty low level
 filt.cond <- fia$COND %>% 
-  filter(PLT_CN %in% psme.est.bah$PLT_CN,
+  filter(PLT_CN %in% abies.est.bah$PLT_CN,
          DSTRBCD1 %in% 10:12 |
            DSTRBCD2 %in% 10:12|
            DSTRBCD3 %in% 10:12) %>% 
   pull(PLT_CN) %>% unique()
 
 filt.cond <- fia$COND %>% 
-  filter(PLT_CN %in% psme.est.bah$PLT_CN,
+  filter(PLT_CN %in% abies.est.bah$PLT_CN,
          TRTCD1 == 10 |
            TRTCD2 == 10 |
            TRTCD3 == 10 |
@@ -214,23 +215,17 @@ filt.cond <- fia$COND %>%
 
 # filter for insect-killed doug fir
 filt.tree <- fia$TREE %>% 
-  filter(PLT_CN %in% psme.est.bah$PLT_CN,
+  filter(PLT_CN %in% abies.est.bah$PLT_CN,
          SPCD == 202,
          agent_key == "insect") %>%
   pull(PLT_CN) %>% unique()
 
-# filter for insect-damaged doug fir --> DAMTYP IS NOT RECORDED :(
-filt.dam <- fia$TREE %>% 
-  filter(PLT_CN %in% psme.est.bah$PLT_CN,
-         SPCD == 202,
-         DAMTYP1 %in% c(21,24,25) |
-           DAMTYP2 %in% c(21,24,25)) %>% 
-  pull(PLT_CN) %>% unique()
 
-## (5) MODEL EXPLORATION -----------
+## (5) INITIAL MODEL EXPLORATION -----------
 
-psme.est.bah %>% 
-  left_join(psme.extract2, by = "PLT_CN") %>% 
+abies.est.bah %>% 
+  filter(abies.prop.prev>0) %>% 
+  left_join(ocho.extract2, by = "PLT_CN") %>% 
   left_join(fia$PLOT %>% 
               select(PLT_CN, ELEV, REMPER)) %>% 
   ungroup() %>% 
@@ -238,85 +233,97 @@ psme.est.bah %>%
   mutate(dist = ifelse(PLT_CN %in% filt.cond, 1, 0)) %>% 
   #filter(dist==1) %>% 
   ggplot(.,
-         aes(x = d_nbri_tot,#CURR_BAA-PREV_BAA,
-             y = CHNG_BAA#,
-             #col = ELEV.class
-         )) +
+         aes(x = d_nbri_tot/1000,#CURR_BAA-PREV_BAA,
+             y = abies.CHNG_BAA,
+             col = abies.prop.prev)) +
   geom_point(pch=19,
              size = 5,
-             alpha = 0.4) +
+             alpha = 0.) +
   geom_hline(yintercept = 0)+
   geom_vline(xintercept = 0) #+
 # facet_wrap(facets = ~ELEV.class)
 
-psme.est.bah %>%
-  left_join(psme.extract2, by = "PLT_CN") %>% 
-  lm(CHNG_BAA ~ d_nbri_tot, data = .) %>% 
+abies.est.bah %>%
+  left_join(ocho.extract2, by = "PLT_CN") %>% 
+  filter(abies.prop.prev>0) %>% 
+  lm(abies.CHNG_BAA*REMPER ~ d_nbri_tot*abies.prop.prev, data = .) %>% 
   summary()
 
 # a couple simple model variants that might improve fit somewhat
 
-d1 <- psme.est.bah %>% 
-  left_join(psme.extract2 %>% 
-              select(-REMPER), by = "PLT_CN") %>% 
+d1 <- abies.est.bah %>% 
+  filter(abies.prop.prev>0) %>% 
+  left_join(ocho.extract2, by = "PLT_CN") %>% 
   left_join(fia$PLOT %>% 
-              select(PLT_CN,ELEV)) %>% 
+              select(PLT_CN, ELEV, REMPER)) %>% 
   left_join(fia$COND %>% 
               filter(CONDID==1) %>% 
               select(PLT_CN, FORTYPCD)) %>% 
   as.data.frame() %>% 
   mutate(FORTYPGRP = substr(FORTYPCD, 0 ,2),
-         CHNG_BAA_NET = CHNG_BAA*REMPER)
+         CHNG_BAA_NET = abies.CHNG_BAA*REMPER) %>% 
+  mutate(prop.group = case_when(abies.prop.prev < 0.25 ~ 0.25,
+                                abies.prop.prev < 0.5 & abies.prop.prev >= 0.25 ~ 0.5,
+                                abies.prop.prev < 0.75 & abies.prop.prev >= 0.5 ~ 0.75,
+                                abies.prop.prev <= 1 & abies.prop.prev >= 0.75 ~ 1
+                                ))
 
-m1 <- lme4::lmer(data = d1 %>% filter(YEAR>2010,PSME.prop>0.5),
-                 formula = CHNG_BAA_NET ~ d_nbri_tot)
+m1 <- lm(data = d1,
+         formula = CHNG_BAA_NET ~ d_nbri_tot*abies.prop.prev)
+
 summary(m1)
 performance::r2(m1)
 
-d1 %>% 
-  filter(YEAR>2010,
-         PSME.prop>0.50) %>%
-  #filter(!PLT_CN %in% filt.cond) %>% 
-  #mutate(psme.class = cut(PSME.prop,breaks=c(0,0.25,0.5,0.75,1))) %>% 
-  #filter(FORTYPGRP == 20) %>% 
-  #filter(PLT_CN %in% filt.tree) %>% 
+ggeffects::ggpredict(model = m1, 
+                     terms = c("d_nbri_tot [-500:500, by = 10]",
+                               "abies.prop.prev [0.25, 0.5, 0.75, 1]")) %>% 
+  rename(d_nbri_tot = x,
+         abies.prop.prev = group) %>% 
   ggplot(.,
-         aes(x = d_nbri_tot,#CURR_BAA-PREV_BAA,
-             y = CHNG_BAA*REMPER,
-             #             y = (MORT_BAA*REMPER)/all.BAA,
-             col = ELEV
-         )) +
-  geom_point(pch=19,
-             size = 5,
-             alpha = 0.7) +
-  #lims(y = c(-1,1))
-  geom_hline(yintercept = 0)+
-  geom_vline(xintercept = 0)# +
-#facet_wrap(facets = ~psme.class)
+         aes(x = d_nbri_tot/1000,
+             y = predicted,
+             group = abies.prop.prev)) +
+  geom_point(inherit.aes=F,
+              data = d1,
+              aes(x = d_nbri_tot/1000,
+                  y = CHNG_BAA_NET,
+                  col = as.character(prop.group)),
+              pch = 19, size = 3, alpha = 0.4) +
+  geom_ribbon(aes(ymin = conf.low,
+                  ymax = conf.high,
+                  fill = abies.prop.prev),
+              alpha = 0.1) +
+  geom_line(aes(col = abies.prop.prev),
+            alpha = 0.6,
+            lwd=2) +
+  scale_color_manual(values = c("0.25" = "darkgoldenrod4",
+                                "0.5" = "darkgoldenrod2",
+                                "0.75" = "darkolivegreen3",
+                                "1" = "forestgreen"),
+                     aesthetics = c("fill","col"),
+                     name = "Abies proportion") + 
+  labs(x = "dNBRI", y = "Net basal area change")
 
-
-m0 <- lm(CHNG_BAA*REMPER ~ d_nbri_tot, data = d1 %>% filter(YEAR>2010,PSME.prop>0.50))
-summary(m0)
-
-d1 %>% 
-  ggplot(.,
-         aes(x = FORTYPGRP,
-             y = PSME.prop)) +
-  geom_boxplot()
 
 # putting spatial layers together for BA change prediction
 
 #LCMS insect/disease/drought cause classes
-psme.cause <- raster::stack("/Users/DanielPerret/Box/PlotsPlanesPixels/data/LCMS/psme_causeofchange_annual.tif")
-for(i in 1:length(names(psme.cause))){
-  psme.cause[[i]][!psme.cause[[i]][]%in%10:12] <- NA
+ocho.cause <- terra::rast("/Users/DanielPerret/Box/PlotsPlanesPixels/data/LCMS/ocho_causeofchange_annual.tif")
+for(i in 1:length(names(ocho.cause))){
+  ocho.cause[[i]][!ocho.cause[[i]][]%in%10:12] <- NA
 }
+ocho.cause <- ocho.cause %>% terra::project(y=ocho.nbr)
 
 # prediction frames
 
+#NBR
+aoi <- st_transform(ocho.fp, crs = st_crs(ocho.nbr))
 
-psme.nbr.calc <- psme.nbr %>% 
-  rasterToPoints() %>% 
+ocho.nbr <- crop(terra::rast(ocho.nbr), aoi, snap="near", mask=T, touches=T, extend=F)
+
+ocho.nbr.calc <- ocho.nbr %>% 
+  raster::stack(.) %>% 
+  raster::rasterToPoints() %>% 
   as.data.frame() %>% 
   mutate(X1995_d10y = X1995 - X1985,
          X1996_d10y = X1996 - X1986,
@@ -348,71 +355,56 @@ psme.nbr.calc <- psme.nbr %>%
          X2022_d10y = X2022 - X2012,
          X2023_d10y = X2023 - X2013)
 
-years <- 2010:2020
-psme.pred <- psme.nbr[[which(names(psme.nbr) %in% paste0("X",years,sep=""))]]
-names(psme.pred) <- paste0(years,"_dbah")
 
-for(i in 1:length(names(psme.pred))){
+#GNN
+gnn.directory <- "C:/Users/DanielPerret/Box/01. daniel.perret Workspace/PROJECTS/plots-planes-pixels/data/gnn/rasters/gnn.2023.1/"
+gnn.list <- list.files(path = gnn.directory,
+                         pattern = "*.tif$", recursive = TRUE, full.names = TRUE)
+gnn <- rast(gnn.list) %>% 
+  terra::project(., proj4string(ocho.nbr))
+gnn <- gnn %>% 
+  terra::resample(y = terra::rast(ocho.nbr), method = "average")
+
+crop.gnn <- crop(gnn, aoi, snap="near", mask=TRUE, touches=TRUE, extend=FALSE)
+
+prop.gnn <- crop.gnn[[1]]
+prop.gnn[] <- (crop.gnn$abam_ba_2021[]+crop.gnn$abgrc_ba_2021[]+crop.gnn$abla_ba_2021[]+crop.gnn$abprsh_ba_2021[]+crop.gnn$psme_ba_2021[])/crop.gnn$ba_ge_3_2021[]
+
+prop.gnn[which(prop.gnn[]==5)] <- 0
+prop.gnn[which(prop.gnn[]>1)] <- 1
+prop.gnn[which(prop.gnn[]<0)] <- 0
+prop.gnn[which(prop.gnn[]==0)] <- NA
+names(prop.gnn) <- "prop_abies"
+
+##prediction frames
+years <- 2018:2023
+ocho.pred <- ocho.nbr[[which(names(ocho.nbr) %in% paste0("X",years,sep=""))]]
+names(ocho.pred) <- paste0("X",years,"_dbah")
+
+new.dat <- ocho.nbr.calc %>% 
+  left_join(prop.gnn %>% 
+              raster::raster(.) %>% 
+              raster::rasterToPoints() %>% 
+              as.data.frame())
+
+#prediction
+for(i in 1:length(names(ocho.pred))){
   
   year <- years[i]
   
-  psme.pred[[i]][!is.na(psme.pred[[i]][])] <- 
-    predict(m0,
-            newdata = psme.nbr.calc %>% 
-              select(d_nbri_tot = paste0("X",year,"_d10y")) %>% 
-              mutate(case="psme"))
+  ocho.pred[[i]][!is.na(ocho.pred[[i]][])] <- 
+    predict(m1,
+            newdata = new.dat %>% 
+              select(d_nbri_tot = paste0("X",year,"_d10y"),
+                     abies.prop.prev = prop_abies))
   
-  psme.pred[[i]][is.na(psme.cause[[paste0("cause_",year)]][])] <- NA
-  
-}
-
-#NOTE: this is the SE of the marginal prediction; i.e., does not include variance of the random intercept
-
-malh.err <- psme.nbr[[which(names(psme.nbr) %in% paste0("X",years,"_nbri"))]]
-names(malh.err) <- paste0(years,"_se")
-for(i in 1:length(names(malh.err))){
-  
-  year <- years[i]
-  
-  newdat <- psme.nbr %>% 
-    select(d_nbri_tot = paste0("X",year,"_nbri_d10y")) %>% 
-    mutate(case="malh", CHNG_BAH=NA)
-  malh.err[[i]][!is.na(malh.err[[i]][])] <- 
-    predict(m0,
-            newdata = newdat,
-            se.fit = T,
-            re.form = NA) %>% 
-    as.data.frame() %>% 
-    pull(se.fit)
-  
-  malh.err[[i]][is.na(malh.cause[[paste0("cause_",year)]][])] <- NA
+  ocho.pred[[i]][is.na(ocho.cause[[paste0("cause_",year)]][])] <- NA
   
 }
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+## it works! Now to compare recent 2022 FIA measurements to these predictions
+## 
 
 
 

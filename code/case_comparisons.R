@@ -31,7 +31,8 @@ mpb.dat %>%
   geom_segment(aes(x = nbri_t1/1000,
                    xend = nbri_t2/1000,
                    y = PREV_BAA,
-                   yend = CURR_BAA),
+                   yend = CURR_BAA,
+                   col = "MPB"),
                alpha = 0.7,
                lwd=1,
                arrow = arrow(angle=25, length = unit(0.1, "inches"), type = "closed")) +
@@ -52,11 +53,11 @@ mpb.dat %>%
                aes(x = nbri_t1/1000,
                    xend = nbri_t2/1000,
                    y = all.BAA.prev,
-                   yend = all.BAA.curr),
+                   yend = all.BAA.curr,
+                   col = "Medford PSME"),
                alpha = 0.7,
                lwd=1,
-               arrow = arrow(angle=25, length = unit(0.1, "inches"), type = "closed"),
-               col = "red") +
+               arrow = arrow(angle=25, length = unit(0.1, "inches"), type = "closed")) +
   # geom_point(data = mpb.dat %>% 
   #              filter(PLT_CN %in% c(malh.filt2,klam.filt2)),
   #            aes(x = nbri_t2,
@@ -74,6 +75,11 @@ mpb.dat %>%
   #            size = 3,
   #            col = "dodgerblue3") +
   labs(x = "Normalized Burn Ratio (NBR)",
-       y = "Stand Basal Area (sq. ft/ac)")
+       y = "Stand Basal Area (sq. ft/ac)") +
+  scale_color_manual(values = c("Medford PSME" = "red",
+                                "MPB" = "black"),
+                     aesthetics = "col",
+                     name = "Case study")
+  
 
 

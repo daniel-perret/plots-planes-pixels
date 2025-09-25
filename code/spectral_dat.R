@@ -139,13 +139,13 @@ load("data/malh_extract_22oct.Rdata")
 load("data/klam_extract22oct.Rdata")
 
 # 
-# malh.extract <-  raster::extract(malh.ndvi, malh.fia, df=T, sp=T, buffer=45,fun=mean) %>% 
-#   sf::st_as_sf() %>% 
-#   left_join(raster::extract(malh.nbri, malh.fia, df=T, sp=T, buffer=45,fun=mean) %>% 
-#               sf::st_as_sf() %>% 
-#               sf::st_drop_geometry() %>% 
-#               select(PLT_CN,contains("nbri")),
-#             by = "PLT_CN") 
+malh.extract <-  raster::extract(malh.ndvi, malh.fia, df=T, sp=T, buffer=45,fun=mean) %>%
+  sf::st_as_sf() %>%
+  left_join(raster::extract(malh.nbri, malh.fia, df=T, sp=T, buffer=45,fun=mean) %>%
+              sf::st_as_sf() %>%
+              sf::st_drop_geometry() %>%
+              select(PLT_CN,contains("nbri")),
+            by = "PLT_CN")
 # 
 # klam.extract <-  raster::extract(klam.ndvi, klam.fia, df=T, sp=T, buffer=45,fun=mean) %>% 
 #   sf::st_as_sf() %>% 

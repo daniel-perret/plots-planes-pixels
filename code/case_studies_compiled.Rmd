@@ -1,0 +1,817 @@
+---
+title: "Untitled"
+author: "D Perret"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+## Setup
+
+```{r echo=F}
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = FALSE,
+                      prompt = FALSE,
+                      error = TRUE,
+                      message = FALSE,
+                      cache = FALSE,
+                      cache.lazy = FALSE,
+                      eval = TRUE,
+                      eval.after = "fig.cap")
+
+library(tidyverse)
+library(rFIA)
+library(ggplot2)
+library(terra)
+library(sf)
+library(ggmap)
+library(rgdal)
+library(lme4)
+library(performance)
+library(ggeffects)
+select <- dplyr::select
+
+# setting my preferred ggplot2 theme
+theme_set(theme_bw())
+theme_update(text = element_text(size=16, color = "black"),
+             panel.grid.major = element_blank(),
+             panel.grid.minor = element_blank(),
+             strip.background = element_blank(),
+             panel.border=element_rect(linewidth=1.5))
+
+# colors to be used in all map figures
+mapcolor <- "wheat3"
+linecolor <- "gray40"
+
+```
+
+
+## FIA data load
+
+```{r}
+
+fia <- readFIA(dir = "/Users/DanielPerret/Box/01. daniel.perret Workspace/PROJECTS/plots-planes-pixels/data/OR_FIA_092225/",
+               common=T, states=c("OR"))
+
+exact.coords <- read.csv("D:/coord_update.csv",header=T) %>% 
+  select(STATECD,
+         PLOT = PLOT_FIADB,
+         LAT_EXACT = PC_LAT_Y,
+         LON_EXACT = PC_LON_X)
+
+#creating some fields in various tables
+
+fia$PLOT <- fia$PLOT %>% 
+  mutate(pltID = paste(UNITCD,STATECD,COUNTYCD,PLOT,sep="_"),
+         PLT_CN = CN) %>% 
+  group_by(pltID) %>% 
+  mutate(most.recent = ifelse(MEASYEAR==max(MEASYEAR),
+                              "yes","no")) %>% 
+  ungroup() %>% 
+  left_join(exact.coords,
+            by=c("STATECD","PLOT")) %>% 
+  mutate(LON = LON_EXACT,
+         LAT = LAT_EXACT)
+
+fia$COND <- fia$COND %>% 
+  left_join(fia$PLOT %>% 
+              select(PLT_CN,most.recent),
+            by="PLT_CN")
+
+fia$TREE <- fia$TREE %>% 
+  left_join(fia$PLOT %>% 
+              select(PLT_CN,most.recent),
+            by="PLT_CN") %>% 
+  mutate(TRE_CN = CN,
+         agent_key = case_when(STATUSCD==2 & AGENTCD %in% c(00,70) ~ "unknown1",
+                               STATUSCD==2 & AGENTCD == 10 ~ "insect",
+                               STATUSCD==2 & AGENTCD == 20 ~ "disease",
+                               STATUSCD==2 & AGENTCD == 30 ~ "fire",
+                               STATUSCD==2 & AGENTCD == 40 ~ "animal",
+                               STATUSCD==2 & AGENTCD == 50 ~ "weather",
+                               STATUSCD==2 & AGENTCD == 60 ~ "competition",
+                               STATUSCD==2 & AGENTCD == 80 ~ "land use",
+                               STATUSCD==2 & is.na(AGENTCD) & 
+                                 (PREV_STATUS_CD==1 | 
+                                    is.na(PREV_STATUS_CD)) ~ "unknown2"),
+         insect.damage = case_when(DAMAGE_AGENT_CD1 >= 10000 &
+                                     DAMAGE_AGENT_CD1 < 19000 ~ 1,
+                                   DAMAGE_AGENT_CD2 >= 10000 &
+                                     DAMAGE_AGENT_CD2 < 19000 ~ 1,
+                                   DAMAGE_AGENT_CD3 >= 10000 &
+                                     DAMAGE_AGENT_CD3 < 19000 ~ 1,
+                                   TRUE ~ 0),
+         disease.damage = case_when(DAMAGE_AGENT_CD1 >= 20000 &
+                                      DAMAGE_AGENT_CD1 < 30000 ~ 1,
+                                    DAMAGE_AGENT_CD2 >= 20000 &
+                                      DAMAGE_AGENT_CD2 < 30000 ~ 1,
+                                    DAMAGE_AGENT_CD3 >= 20000 &
+                                      DAMAGE_AGENT_CD3 < 30000 ~ 1,
+                                    TRUE ~ 0),
+         other.damage = case_when(DAMAGE_AGENT_CD1 > 30000 ~ 1,
+                                  DAMAGE_AGENT_CD2 > 30000 ~ 1,
+                                  DAMAGE_AGENT_CD3 > 30000 ~ 1,
+                                  TRUE ~ 0)) %>% 
+  left_join(.,
+            fia$TREE %>% 
+              select(PREV_TRE_CN, SPCD) %>% 
+              rename(LATER_SPCD=SPCD),
+            by=c("TRE_CN"="PREV_TRE_CN")) %>% 
+  mutate(SPCD = case_when(SPCD!=LATER_SPCD & !is.na(LATER_SPCD) ~ LATER_SPCD,
+                          is.na(LATER_SPCD) ~ SPCD,
+                          TRUE ~ SPCD)) %>% 
+  left_join(.,
+            fia$PLOT %>% 
+              select(PLT_CN, MEASYEAR),
+            by="PLT_CN")
+
+```
+
+## Spatial data setup
+
+```{r}
+#  WGS84
+old.proj <- "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"
+# Albers Equal Area; centered in western US
+base.proj <- "+proj=aea +lat_0=23 +lon_0=-96 +lat_1=29.5 +lat_2=45.5 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs"
+
+or <- sf::read_sf("/Users/DanielPerret/Box/01. daniel.perret Workspace/base_spatialdata/state_boundaries/state_boundaries.shp") %>% filter(STATE=="OR")
+
+sp.fia <- fia$PLOT %>% 
+  filter(!is.na(LON_EXACT)) %>% 
+  sf::st_as_sf(coords = c("LON_EXACT","LAT_EXACT"),
+               crs = old.proj,
+               remove = FALSE) %>% 
+  sf::st_transform(crs = base.proj)
+
+```
+
+
+## Case study 1: Mountain pine beetle in dry ponderosa forest
+
+### ADS data load
+
+```{r}
+
+klam.fp <- sf::read_sf("data/ADS_data/shapefiles/mpb_allyears_fp.shp") %>% 
+  sf::st_transform(crs = base.proj)
+malh.fp <- sf::read_sf("data/ADS_data/shapefiles/MPB2_malh_fp.shp") %>% 
+  sf::st_transform(crs = base.proj)
+crla.fp <- sf::read_sf("data/ADS_data/shapefiles/crla_mpb_fp.shp") %>% 
+  sf::st_transform(crs = base.proj)
+
+
+```
+
+
+### Remote sensing data load
+
+```{r}
+
+malh.nbr <- terra::rast("/Users/DanielPerret/Box/PlotsPlanesPixels/data/MPB_casestudy/malheur/malhNBR19852023.tif") %>% 
+  terra::project(base.proj)
+klam.nbr <- terra::rast("/Users/DanielPerret/Box/PlotsPlanesPixels/data/MPB_casestudy/klamath/klamNBR19852023.tif") %>% 
+  terra::project(base.proj)
+
+malh.lcms <- terra::rast("/Users/DanielPerret/Box/PlotsPlanesPixels/data/LCMS/malh_cause_of_change_annual.tif") %>% 
+  terra::project(base.proj) %>% 
+  ifel(. %in% 15:16, ., NA) %>% #make raster NA except for cells assigned insect or diseases
+  terra::resample(., malh.nbr) #match exactly with nbr ras
+
+klam.lcms <- terra::rast("/Users/DanielPerret/Box/PlotsPlanesPixels/data/LCMS/klam_cause_of_change_annual.tif") %>% 
+  terra::project(base.proj) %>% 
+  ifel(. %in% 15:16, ., NA) %>% #make raster NA except for cells assigned insect or diseases
+  terra::resample(., klam.nbr) #match exactly with nbr ras
+
+```
+
+### Extractions
+
+```{r}
+
+klam.fia <- sf::st_filter(sp.fia, klam.fp) %>% 
+  filter(MEASYEAR %in% c(2000:2016))
+malh.fia <- sf::st_filter(sp.fia, malh.fp) %>% 
+  filter(MEASYEAR %in% 2011:2019)
+
+klam.ext <- terra::extract(klam.nbr, 
+                           terra::vect(klam.fia) %>% 
+                             terra::buffer(width = 45),
+                           fun = mean,
+                           na.rm = T, bind = T) %>% 
+  as.data.frame()
+
+malh.ext <- terra::extract(malh.nbr,
+                           terra::vect(malh.fia) %>% 
+                             terra::buffer(width=45),
+                           fun = mean,
+                           na.rm = T, bind = T) %>% 
+  as.data.frame()
+
+mpb.extract <- klam.ext %>% 
+  mutate(case = "klam") %>% 
+  bind_rows(malh.ext %>% 
+              mutate(case = "malh")) %>% 
+  mutate(YEAR2 = MEASYEAR,
+         YEAR1 = as.integer(round(MEASYEAR-REMPER))) %>%
+  select(PLT_CN,YEAR1,YEAR2,REMPER, 
+         contains("X")) %>%
+  select(-LAT_EXACT, -LON_EXACT, -SUBP_EXAMINE_CD) %>% 
+  pivot_longer(cols = c(contains("X")),
+               names_to = "year",
+               values_to = "nbr") %>%
+  mutate(year = as.integer(substr(year, start=2, stop = 5))) %>% 
+  filter(!is.na(REMPER)) %>% sf::st_drop_geometry() %>% 
+  ungroup() %>% 
+  rowwise() %>% 
+  filter(year %in% YEAR1:YEAR2) %>% 
+  group_by(PLT_CN) %>%   
+  mutate(d_nbr = nbr - lag(nbr),
+         di_nbr = nbr - first(nbr)) %>%
+  ungroup() %>% 
+  mutate(nbr_t2 = ifelse(year == YEAR2,nbr,0),
+         nbr_t1 = ifelse(year == YEAR1,nbr,0),
+         d_nbr_ann = ifelse(year == YEAR2,d_nbr,0)) %>% 
+  group_by(PLT_CN,YEAR1,YEAR2,REMPER) %>% 
+  summarise(nbr_t2 = sum(nbr_t2),
+            nbr_t1 = sum(nbr_t1),
+            d_nbr_tot = sum(d_nbr, na.rm=T),
+            d_nbr_abs = sum(abs(d_nbr), na.rm=T),
+            di_nbr_tot = sum(di_nbr, na.rm=T)) %>% 
+  ungroup()
+
+```
+### Change estimation
+
+```{r}
+cond.filt <- fia$COND %>% 
+  filter(DSTRBCD1 %in% 10:12 |
+           DSTRBCD2 %in% 10:12 |
+           DSTRBCD3 %in% 10:12) %>% 
+  pull(PLT_CN) %>% 
+  unique
+
+
+klam.est.bah <- rFIA::growMort(db = fia,
+                               polys = klam.fp,
+                               byPlot = T,
+                               returnSpatial = F,
+                               treeDomain = DIA>5,
+                               stateVar = "BAA",
+                               totals=T) %>% 
+  filter(PLT_CN %in% cond.filt
+         #,YEAR %in% 2000:2016
+  ) %>% 
+  mutate(case = "klam")
+
+malh.est.bah <- rFIA::growMort(db = fia,
+                               polys = malh.fp,
+                               byPlot = T,
+                               returnSpatial = F,
+                               treeDomain = DIA>5,
+                               stateVar = "BAA",
+                               totals=T) %>% 
+  filter(PLT_CN %in% cond.filt
+         #,YEAR %in% 2011:2019
+  ) %>% 
+  mutate(case="malh")
+
+
+
+```
+
+### Modeling
+
+```{r}
+
+mpb.dat <- klam.est.bah %>% 
+  bind_rows(malh.est.bah) %>% 
+  left_join(mpb.extract,
+            by = c("PLT_CN")) %>% 
+  filter(PLT_CN %in% cond.filt,
+         !is.na(d_nbr_tot)) %>% 
+  mutate(CHNG_BAA_TOT = CURR_BAA - PREV_BAA)
+
+m0 <- lme4::lmer(CHNG_BAA_TOT ~ d_nbr_tot + (1|case), data = mpb.dat)
+
+```
+
+### Prediction
+
+```{r}
+##MALH
+malh.pred <- malh.nbr %>% 
+  subset(paste0(2011:2019))
+
+#calculating NBR differences over decade preceding each outbreak year
+for(year in 2011:2019){
+  malh.pred[[paste0(year)]] <- malh.pred[[paste0(year)]]-malh.nbr[[paste0(year-10)]]
+}
+
+for(year in 2011:2019){
+  newdat <- malh.pred[[paste(year)]]
+  names(newdat) <- "d_nbr_tot"
+  newdat$case = "malh"
+  malh.pred[[paste(year)]] <- terra::predict(m0,newdat)
+}
+
+malh.pred.lcms <- malh.lcms %>% 
+  subset(paste0("cause_",2011:2019)) 
+
+malh.pred.lcms <- ifel(is.na(malh.pred.lcms), NA, malh.pred)
+
+##KLAM
+klam.pred <- klam.nbr %>% 
+  subset(paste0(2000:2016))
+
+#calculating NBR differences over decade preceding each outbreak year
+for(year in 2000:2016){
+  klam.pred[[paste0(year)]] <- klam.pred[[paste0(year)]]-klam.nbr[[paste0(year-10)]]
+}
+
+for(year in 2000:2016){
+  newdat <- klam.pred[[paste(year)]]
+  names(newdat) <- "d_nbr_tot"
+  newdat$case = "klam"
+  klam.pred[[paste(year)]] <- terra::predict(m0,newdat)
+}
+
+klam.pred.lcms <- klam.lcms %>% 
+  subset(paste0("cause_",2000:2016)) 
+
+klam.pred.lcms <- ifel(is.na(klam.pred.lcms), NA, klam.pred)
+
+```
+
+### Spatial validation
+
+### Figures
+
+Model fit figure
+```{r}
+mpb.dat %>% 
+  bind_cols(predict(m0,se = T)) %>% 
+  ggplot(.,
+         aes(x = d_nbr_tot,
+             y = (CHNG_BAA_TOT),
+             col = case)) +
+  geom_point(cex = 3, alpha = 0.6) +
+  geom_ribbon(aes(ymin = fit-(se.fit*1.96),
+                  ymax = fit+(se.fit*1.96),
+                  group = case),
+              fill="gray",
+              col=NA,
+              alpha = 0.5) +
+  geom_line(aes(y = fit),
+            lwd=1.5) +
+  labs(x = "NBR change (net)",
+       y = "Basal area change (ft2/ac)")
+```
+
+Annual maps (as for gif)
+```{r}
+## MALH
+
+ext <- sf::st_bbox(malh.fp %>% sf::st_transform(crs=CRS(old.proj)))
+names(ext) <- c("left","bottom","right","top")
+
+register_stadiamaps("d0a45b35-73bc-47d3-a8c7-8a0be7f39dc6")
+malh.map <- get_stadiamap(bbox = ext, mapytpe = "stamen_terrain",)
+
+
+for(year in names(malh.pred.lcms)){
+  
+  p <- ggmap(malh.map) +
+    geom_sf(data = malh.fp %>% 
+              sf::st_transform(crs=CRS(old.proj)),
+            inherit.aes = F,
+            fill=NA,
+            col = "black",
+            lwd=1.5) +
+    geom_raster(data = malh.pred.lcms[[year]] %>%
+                  terra::project(CRS(old.proj)) %>% 
+                  as.data.frame(.,xy=T) %>% 
+                  rename(val = 3),
+                aes(x = x, y = y, fill = val)) +
+    scale_fill_gradient2(low = "indianred2",mid="white",high = "dodgerblue2",
+                         midpoint=0,
+                         aesthetics = "fill", 
+                         guide = "legend", 
+                         limits = c(-300,200),
+                         n.breaks = 9,
+                         na.value="transparent",
+                         name="BAH\n(m2/ha)") +
+    labs(x = "Longitude", y = "Latitude",title = year) +
+    theme(axis.text.x = element_text(angle = 45, hjust=1))
+  
+  
+  ggsave(filename = paste0("figures/new_gifs/malh/",year,".jpg"), 
+         plot = p,
+         width = 12,
+         height = 9,
+         units = "in",
+         dpi = 150)
+  
+}
+## KLAM
+
+ext <- sf::st_bbox(klam.fp %>% sf::st_transform(crs=CRS(old.proj)))
+names(ext) <- c("left","bottom","right","top")
+
+register_stadiamaps("d0a45b35-73bc-47d3-a8c7-8a0be7f39dc6")
+klam.map <- get_stadiamap(bbox = ext, mapytpe = "stamen_terrain",)
+
+
+for(year in names(klam.pred.lcms)){
+  
+  p <- ggmap(klam.map) +
+    geom_sf(data = klam.fp %>% 
+              sf::st_transform(crs=CRS(old.proj)),
+            inherit.aes = F,
+            fill=NA,
+            col = "black",
+            lwd=1.5) +
+    geom_raster(data = klam.pred.lcms[[year]] %>%
+                  terra::project(CRS(old.proj)) %>% 
+                  as.data.frame(.,xy=T) %>% 
+                  rename(val = 3),
+                aes(x = x, y = y, fill = val)) +
+    scale_fill_gradient2(low = "indianred2",mid="white",high = "dodgerblue2",
+                         midpoint=0,
+                         aesthetics = "fill", 
+                         guide = "legend", 
+                         limits = c(-300,200),
+                         n.breaks = 9,
+                         na.value="transparent",
+                         name="BAH\n(m2/ha)") +
+    labs(x = "Longitude", y = "Latitude",title = year) +
+    theme(axis.text.x = element_text(angle = 45, hjust=1))
+  
+  
+  ggsave(filename = paste0("figures/new_gifs/klam/",year,".jpg"), 
+         plot = p,
+         width = 12,
+         height = 9,
+         units = "in",
+         dpi = 150)
+  
+}
+
+
+```
+
+
+## Case study 2: Flatheaded fir borer in Douglas-fir forest
+
+### ADS data load
+
+```{r}
+
+psme.fp <- sf::read_sf("data/ADS_data/shapefiles/psme_fp.shp") %>% 
+  sf::st_transform(base.proj)
+
+```
+
+### Remote sensing data load and processing
+
+```{r}
+
+#NBR timeseries
+psme.nbr <- terra::rast("/Users/DanielPerret/Box/PlotsPlanesPixels/data/FIR_casestudy/psme_nbr.tif") %>% 
+  terra::project(CRS(base.proj))
+
+#LCMS timeseries
+psme.lcms <- terra::rast("/Users/DanielPerret/Box/PlotsPlanesPixels/data/LCMS/psme_causeofchange_annual.tif") %>% 
+  terra::project(base.proj) %>% 
+  ifel(. %in% 10:12, ., NA) %>% #make raster NA except for cells assigned insect or diseases
+  terra::resample(., psme.nbr) #match exactly with nbr ras
+
+#GNN imputed forest attributes
+
+all.ba <- terra::rast("C:/Users/DanielPerret/Box/PlotsPlanesPixels/data/GNN/all_OR/rasters/gnn.2023.1/ba_ge_3_2021.tif") %>% 
+  terra::project(., CRS(base.proj)) %>% 
+  terra::crop(psme.nbr) %>% 
+  ifel(.<0,0,.)
+
+psme.ba <- terra::rast("C:/Users/DanielPerret/Box/PlotsPlanesPixels/data/GNN/all_OR/rasters/gnn.2023.1/psme_ba_2021.tif") %>% 
+  terra::project(., CRS(base.proj)) %>% 
+  terra::crop(psme.nbr) %>% 
+  ifel(.<0,0,.)
+
+prop.ba <- (psme.ba/all.ba) %>% 
+  terra::resample(psme.nbr) %>% 
+  ifel(.>1, 1, .)
+
+```
+
+### Extractions
+
+```{r}
+
+psme.fia <- sf::st_filter(sp.fia, psme.fp) %>% 
+  filter(MEASYEAR %in% c(2010:2021))
+
+psme.ext <- terra::extract(psme.nbr, 
+                           terra::vect(psme.fia) %>% 
+                             terra::buffer(width = 45),
+                           fun = mean,
+                           na.rm = T, bind = T) %>% 
+  as.data.frame()
+
+psme.extract <- psme.ext %>% 
+  mutate(case = "psme") %>% 
+  mutate(YEAR2 = MEASYEAR,
+         YEAR1 = as.integer(round(MEASYEAR-REMPER))) %>%
+  select(PLT_CN,YEAR1,YEAR2,REMPER, 
+         contains("X")) %>%
+  select(-LAT_EXACT, -LON_EXACT, -SUBP_EXAMINE_CD) %>% 
+  pivot_longer(cols = c(contains("X")),
+               names_to = "year",
+               values_to = "nbr") %>%
+  mutate(year = as.integer(substr(year, start=2, stop = 5))) %>% 
+  filter(!is.na(REMPER)) %>% sf::st_drop_geometry() %>% 
+  ungroup() %>% 
+  rowwise() %>% 
+  filter(year %in% YEAR1:YEAR2) %>% 
+  group_by(PLT_CN) %>%   
+  mutate(d_nbr = nbr - lag(nbr),
+         di_nbr = nbr - first(nbr)) %>%
+  ungroup() %>% 
+  mutate(nbr_t2 = ifelse(year == YEAR2,nbr,0),
+         nbr_t1 = ifelse(year == YEAR1,nbr,0),
+         d_nbr_ann = ifelse(year == YEAR2,d_nbr,0)) %>% 
+  group_by(PLT_CN,YEAR1,YEAR2,REMPER) %>% 
+  summarise(nbr_t2 = sum(nbr_t2),
+            nbr_t1 = sum(nbr_t1),
+            d_nbr_tot = sum(d_nbr, na.rm=T),
+            d_nbr_abs = sum(abs(d_nbr), na.rm=T),
+            di_nbr_tot = sum(di_nbr, na.rm=T)) %>% 
+  ungroup()
+
+
+```
+
+### Change Estimation
+
+```{r}
+
+est <- rFIA::growMort(db = fia,
+                      polys = psme.fp,
+                      byPlot = T, bySpecies = T,
+                      returnSpatial = F,
+                      treeDomain = DIA>5,
+                      stateVar = "BAA",
+                      totals = T) %>% 
+  group_by(pltID) %>% 
+  filter(YEAR == max(YEAR)) %>% 
+  ungroup()
+
+psme.est.bah <- est %>% 
+  filter(SPCD == 202) %>% 
+  left_join(est %>% 
+              group_by(pltID) %>% 
+              mutate(psme = ifelse(SPCD==202,1,0)) %>% 
+              summarise(PSME.prop = sum(PREV_BAA*psme)/sum(PREV_BAA),
+                        other.BAA = sum(PREV_BAA)-sum(PREV_BAA*psme),
+                        all.BAA = sum(PREV_BAA),
+                        all.BAA.curr = sum(CURR_BAA),
+                        all.BAA.prev = sum(PREV_BAA),
+                        all.CHNG_BAA = sum(CHNG_BAA))) %>% 
+  mutate(CHNG_PERC_psme = (CURR_BAA-PREV_BAA)/(all.BAA))
+
+```
+
+### Modeling
+
+```{r}
+filt.tree <- fia$TREE %>% 
+  filter(PLT_CN %in% psme.est.bah$PLT_CN,
+         SPCD == 202,
+         agent_key == "insect") %>%
+  pull(PLT_CN) %>% unique()
+
+psme.dat <- psme.est.bah %>% 
+  left_join(psme.extract,
+            by = c("PLT_CN")) %>% 
+  filter(#PLT_CN %in% cond.filt,
+    !is.na(d_nbr_tot)) %>% 
+  mutate(CHNG_BAA_TOT = CURR_BAA - PREV_BAA)
+
+m0 <- lm(CHNG_BAA_TOT ~ d_nbr_tot*PSME.prop, data = psme.dat)
+
+
+```
+
+### Prediction
+
+```{r}
+
+psme.pred <- psme.nbr %>% 
+  subset(paste0(2010:2020))
+
+#calculating NBR differences over decade preceding each outbreak year
+for(year in 2010:2020){
+  psme.pred[[paste0(year)]] <- psme.pred[[paste0(year)]]-psme.nbr[[paste0(year-10)]]
+}
+
+#prediction over raster for each year in outbreak timeseries
+for(year in 2010:2020){
+  newdat <- psme.pred[[paste(year)]]
+  names(newdat) <- "d_nbr_tot"
+  newdat$PSME.prop <- prop.ba
+  psme.pred[[paste(year)]] <- terra::predict(m0,newdat)
+}
+
+#limiting predictions to LCMS-identified pixels
+psme.pred.lcms <- psme.lcms %>% 
+  subset(paste0("cause_",2010:2020)) 
+
+psme.pred.lcms <- ifel(is.na(psme.pred.lcms), NA, psme.pred)
+
+
+
+```
+
+### Validation??
+
+### Figures
+
+Model fit, interactions
+```{r}
+
+
+ggeffects::ggpredict(model = m0, 
+                     terms = c("d_nbr_tot [-500:500, by = 10]",
+                               "PSME.prop [0.25, 0.5, 0.75, 1]")) %>% 
+  rename(d_nbr_tot = x,
+         PSME.prop = group) %>% 
+  ggplot(.,
+         aes(x = d_nbr_tot/1000,
+             y = predicted,
+             group = PSME.prop)) +
+  geom_point(inherit.aes=F,
+             data = psme.dat %>% 
+               mutate(prop.group = case_when(PSME.prop < 0.25 ~ 0.25,
+                                             PSME.prop < 0.5 & PSME.prop >= 0.25 ~ 0.5,
+                                             PSME.prop < 0.75 & PSME.prop >= 0.5 ~ 0.75,
+                                             PSME.prop <= 1 & PSME.prop >= 0.75 ~ 1
+               )) %>% 
+               na.omit(),
+             aes(x = d_nbr_tot/1000,
+                 y = CHNG_BAA_TOT,
+                 col = as.character(prop.group)),
+             pch = 19, size = 3, alpha = 0.4) +
+  geom_ribbon(aes(ymin = conf.low,
+                  ymax = conf.high,
+                  fill = PSME.prop),
+              alpha = 0.1) +
+  geom_line(aes(col = PSME.prop),
+            alpha = 0.8,
+            lwd=2) +
+  scale_color_manual(values = c("0.25" = "darkgoldenrod4",
+                                "0.5" = "darkgoldenrod2",
+                                "0.75" = "darkolivegreen3",
+                                "1" = "forestgreen"),
+                     aesthetics = c("fill","col"),
+                     name = "PSME proportion") + 
+  labs(x = "dNBR", y = "Net basal area change")
+
+```
+
+Annual maps
+```{r}
+
+ext <- sf::st_bbox(psme.fp %>% sf::st_transform(crs=CRS(old.proj)))
+names(ext) <- c("left","bottom","right","top")
+
+register_stadiamaps("d0a45b35-73bc-47d3-a8c7-8a0be7f39dc6")
+psme.map <- get_stadiamap(bbox = ext, mapytpe = "stamen_terrain",)
+
+
+for(year in names(psme.pred.lcms)){
+  
+  p <- ggmap(psme.map) +
+    geom_sf(data = psme.fp %>% 
+              sf::st_transform(crs=CRS(old.proj)),
+            inherit.aes = F,
+            fill=NA,
+            col = "black",
+            lwd=1.5) +
+    geom_raster(data = psme.pred.lcms[[year]] %>%
+                  terra::project(CRS(old.proj)) %>% 
+                  as.data.frame(.,xy=T) %>% 
+                  rename(val = 3),
+                aes(x = x, y = y, fill = val)) +
+    scale_fill_gradient2(low = "indianred2",mid="white",high = "dodgerblue2",
+                         midpoint=0,
+                         aesthetics = "fill", 
+                         guide = "legend", 
+                         limits = c(-100,50),
+                         n.breaks = 9,
+                         na.value="transparent",
+                         name="BAH\n(m2/ha)") +
+    labs(x = "Longitude", y = "Latitude",title = year) +
+    theme(axis.text.x = element_text(angle = 45, hjust=1))
+  
+  
+  ggsave(filename = paste0("figures/new_gifs/psme/",year,".jpg"), 
+         plot = p,
+         width = 12,
+         height = 9,
+         units = "in",
+         dpi = 150)
+  
+}
+```
+
+## Case study 3: Fir engraver in mixed conifer forest
+
+### ADS data load
+
+```{r}
+ocho.fp <- sf::read_sf("data/ADS_data/shapefiles/ocho_fir2022.shp") %>% sf::st_transform(base.proj)
+
+```
+
+### Remote sensing data load and processing
+
+```{r}
+
+#NBR timeseries
+ocho.nbr <- terra::rast("/Users/DanielPerret/Box/PlotsPlanesPixels/data/OCHOCO_casestudy/ocho_nbr.tif") %>% 
+  terra::project(CRS(base.proj))
+
+#LCMS timeseries
+ocho.lcms <- terra::rast("/Users/DanielPerret/Box/PlotsPlanesPixels/data/LCMS/ocho_causeofchange_annual.tif") %>% 
+  terra::project(base.proj) %>% 
+  ifel(. %in% 10:12, ., NA) %>% #make raster NA except for cells assigned insect or diseases
+  terra::resample(., ocho.nbr) #match exactly with nbr ras
+
+#GNN imputed forest attributes
+
+all.ba <- terra::rast("C:/Users/DanielPerret/Box/PlotsPlanesPixels/data/GNN/all_OR/rasters/gnn.2023.1/ba_ge_3_2021.tif") %>% 
+  terra::project(., CRS(base.proj)) %>% 
+  terra::crop(ocho.nbr) %>% 
+  ifel(.<0,0,.)
+
+ocho.ba <- terra::rast("C:/Users/DanielPerret/Box/PlotsPlanesPixels/data/GNN/all_OR/rasters/gnn.2023.1/ocho_ba_2021.tif") %>% 
+  terra::project(., CRS(base.proj)) %>% 
+  terra::crop(ocho.nbr) %>% 
+  ifel(.<0,0,.)
+
+prop.ba <- (ocho.ba/all.ba) %>% 
+  terra::resample(ocho.nbr) %>% 
+  ifel(.>1, 1, .)
+
+```
+### Extractions
+
+### Change estimation
+
+### Modeling
+
+### Prediction
+
+### Temporal validation
+
+### Figures
+
+
+
+## Data and model comparisons
+
+## Draft manuscript figures
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
