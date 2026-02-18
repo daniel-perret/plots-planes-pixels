@@ -3,6 +3,8 @@ title: "Untitled"
 author: "D Perret"
 date: "`r Sys.Date()`"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 ## Setup
@@ -28,6 +30,8 @@ library(rgdal)
 library(lme4)
 library(performance)
 library(ggeffects)
+library(plotrix)
+
 select <- dplyr::select
 
 # setting my preferred ggplot2 theme
@@ -69,7 +73,9 @@ fia$PLOT <- fia$PLOT %>%
   ungroup() %>% 
   left_join(exact.coords,
             by=c("STATECD","PLOT")) %>% 
-  mutate(LON = LON_EXACT,
+  mutate(LON_FUZZ = LON,
+         LAT_FUZZ = LAT,
+         LON = LON_EXACT,
          LAT = LAT_EXACT)
 
 fia$COND <- fia$COND %>% 
@@ -182,6 +188,57 @@ klam.lcms <- terra::rast("/Users/DanielPerret/Box/PlotsPlanesPixels/data/LCMS/kl
   ifel(. %in% 15:16, ., NA) %>% #make raster NA except for cells assigned insect or diseases
   terra::resample(., klam.nbr) #match exactly with nbr ras
 
+
+#GNN imputed forest attributes
+# 
+# all.ba <- terra::rast("C:/Users/DanielPerret/Box/01. daniel.perret Workspace/PROJECTS/plots-planes-pixels/data/gnn/rasters/mpb/ba_ge_3_2021.tif") %>% 
+#   terra::project(., CRS(base.proj))
+# 
+# malh.all.ba <- all.ba %>% 
+#   terra::crop(malh.nbr) %>% 
+#   ifel(.<0,0,.)
+# 
+# klam.all.ba <- all.ba %>% 
+#   terra::crop(klam.nbr) %>% 
+#   ifel(.<0,0,.)
+# 
+# rm(all.ba)
+
+sp.list <- list.files(path = "C:/Users/DanielPerret/Box/01. daniel.perret Workspace/PROJECTS/plots-planes-pixels/data/gnn/rasters/mpb/",
+                      pattern = "*.tif$", recursive = TRUE, full.names = TRUE)
+
+sp.ba <- terra::rast(sp.list) %>% 
+  terra::project(base.proj)# %>% 
+#terra::crop(ocho.nbr) %>% 
+#ifel(.<0,0,.)
+
+sp.ba.malh <- sp.ba %>% 
+  terra::crop(malh.nbr) %>% 
+  ifel(.<0,0,.)
+
+sp.ba.klam <- sp.ba %>% 
+  terra::crop(klam.nbr) %>% 
+  ifel(.<0,0,.)
+
+rm(sp.ba)
+
+prop.ba.malh <- sp.ba.malh[[1]]
+prop.ba.malh[] <- (sp.ba.malh$pial_ba_2021[]+sp.ba.malh$pico_ba_2021[]+sp.ba.malh$pila_ba_2021[]+sp.ba.malh$pimo3_ba_2021[]+sp.ba.malh$pipo_ba_2021[])/sp.ba.malh$ba_ge_3_2021[]
+
+prop.ba.klam <- sp.ba.klam[[1]]
+prop.ba.klam[] <- (sp.ba.klam$pial_ba_2021[]+sp.ba.klam$pico_ba_2021[]+sp.ba.klam$pila_ba_2021[]+sp.ba.klam$pimo3_ba_2021[]+sp.ba.klam$pipo_ba_2021[])/sp.ba.klam$ba_ge_3_2021[]
+
+prop.ba.malh <- prop.ba.malh %>% 
+  terra::resample(malh.nbr) %>% 
+  ifel(.>1, 1, .)
+
+prop.ba.klam <- prop.ba.klam %>% 
+  terra::resample(klam.nbr) %>% 
+  ifel(.>1, 1, .)
+
+prop.ba.malh[is.na(malh.nbr$'1985')] <- NA
+prop.ba.klam[is.na(klam.nbr$'1985')] <- NA
+
 ```
 
 ### Extractions
@@ -243,38 +300,96 @@ mpb.extract <- klam.ext %>%
 ### Change estimation
 
 ```{r}
-cond.filt <- fia$COND %>% 
+cond.filt <- fia$COND %>%
   filter(DSTRBCD1 %in% 10:12 |
            DSTRBCD2 %in% 10:12 |
-           DSTRBCD3 %in% 10:12) %>% 
-  pull(PLT_CN) %>% 
+           DSTRBCD3 %in% 10:12) %>%
+  pull(PLT_CN) %>%
   unique
+# 
+# 
+# klam.est.bah <- rFIA::growMort(db = fia,
+#                                polys = klam.fp,
+#                                byPlot = T,
+#                                returnSpatial = F,
+#                                treeDomain = DIA>5,
+#                                stateVar = "BAA",
+#                                totals=T) %>% 
+#   filter(PLT_CN %in% cond.filt
+#          #,YEAR %in% 2000:2016
+#   ) %>% 
+#   mutate(case = "klam")
+# 
+# malh.est.bah <- rFIA::growMort(db = fia,
+#                                polys = malh.fp,
+#                                byPlot = T,
+#                                returnSpatial = F,
+#                                treeDomain = DIA>5,
+#                                stateVar = "BAA",
+#                                totals=T) %>% 
+#   filter(PLT_CN %in% cond.filt
+#          #,YEAR %in% 2011:2019
+#   ) %>% 
+#   mutate(case="malh")
+# 
 
+## option with %host in model
 
-klam.est.bah <- rFIA::growMort(db = fia,
-                               polys = klam.fp,
-                               byPlot = T,
-                               returnSpatial = F,
-                               treeDomain = DIA>5,
-                               stateVar = "BAA",
-                               totals=T) %>% 
-  filter(PLT_CN %in% cond.filt
-         #,YEAR %in% 2000:2016
-  ) %>% 
-  mutate(case = "klam")
+klam.est <- rFIA::growMort(db = fia,
+                           polys = klam.fp,
+                           byPlot = T, bySpecies = T,
+                           returnSpatial = F,
+                           treeDomain = DIA>5,
+                           stateVar = "BAA",
+                           totals = T) %>% 
+  group_by(pltID) %>% 
+  filter(YEAR == max(YEAR)) %>% 
+  ungroup()
 
-malh.est.bah <- rFIA::growMort(db = fia,
-                               polys = malh.fp,
-                               byPlot = T,
-                               returnSpatial = F,
-                               treeDomain = DIA>5,
-                               stateVar = "BAA",
-                               totals=T) %>% 
-  filter(PLT_CN %in% cond.filt
-         #,YEAR %in% 2011:2019
-  ) %>% 
+klam.est.bah <- klam.est %>% 
+  mutate(pine = ifelse(SPCD%in%c(101,108,117,119,122),
+                       1,0)) %>% 
+  group_by(pltID) %>% 
+  summarise(pine.prop.prev = sum(PREV_BAA*pine)/sum(PREV_BAA),
+            pine.prop.curr = sum(CURR_BAA*pine)/sum(CURR_BAA),
+            pine.CHNG_BAA = sum(CHNG_BAA*pine),
+            other.BAA = sum(PREV_BAA)-sum(PREV_BAA*pine),
+            pine.BAA.curr = sum(CURR_BAA*pine),
+            pine.BAA.prev = sum(PREV_BAA*pine),
+            all.BAA.curr = sum(CURR_BAA),
+            all.BAA.prev = sum(PREV_BAA),
+            all.CHNG_BAA = sum(CHNG_BAA),
+            YEAR = first(YEAR),
+            PLT_CN = first(PLT_CN)) %>% 
+  mutate(case="klam")
+
+malh.est <- rFIA::growMort(db = fia,
+                           polys = malh.fp,
+                           byPlot = T, bySpecies = T,
+                           returnSpatial = F,
+                           treeDomain = DIA>5,
+                           stateVar = "BAA",
+                           totals = T) %>% 
+  group_by(pltID) %>% 
+  filter(YEAR == max(YEAR)) %>% 
+  ungroup()
+
+malh.est.bah <- malh.est %>% 
+  mutate(pine = ifelse(SPCD%in%c(101,108,117,119,122),
+                       1,0)) %>% 
+  group_by(pltID) %>% 
+  summarise(pine.prop.prev = sum(PREV_BAA*pine)/sum(PREV_BAA),
+            pine.prop.curr = sum(CURR_BAA*pine)/sum(CURR_BAA),
+            pine.CHNG_BAA = sum(CHNG_BAA*pine),
+            other.BAA = sum(PREV_BAA)-sum(PREV_BAA*pine),
+            pine.BAA.curr = sum(CURR_BAA*pine),
+            pine.BAA.prev = sum(PREV_BAA*pine),
+            all.BAA.curr = sum(CURR_BAA),
+            all.BAA.prev = sum(PREV_BAA),
+            all.CHNG_BAA = sum(CHNG_BAA),
+            YEAR = first(YEAR),
+            PLT_CN = first(PLT_CN)) %>% 
   mutate(case="malh")
-
 
 
 ```
@@ -288,10 +403,14 @@ mpb.dat <- klam.est.bah %>%
   left_join(mpb.extract,
             by = c("PLT_CN")) %>% 
   filter(PLT_CN %in% cond.filt,
-         !is.na(d_nbr_tot)) %>% 
-  mutate(CHNG_BAA_TOT = CURR_BAA - PREV_BAA)
+         !is.na(d_nbr_tot),
+         !is.na(pine.prop.prev)) %>% 
+  mutate(#CHNG_BAA_TOT = CURR_BAA - PREV_BAA,
+    CHNG_BAA_TOT = pine.BAA.curr - pine.BAA.prev,
+    CHNG_BAA_TOT_ha = CHNG_BAA_TOT*0.2296)
 
-m0 <- lme4::lmer(CHNG_BAA_TOT ~ d_nbr_tot + (1|case), data = mpb.dat)
+m0 <- lme4::lmer(CHNG_BAA_TOT_ha ~ d_nbr_tot*pine.prop.prev + (1|case), 
+                 data = mpb.dat)
 
 ```
 
@@ -304,13 +423,14 @@ malh.pred <- malh.nbr %>%
 
 #calculating NBR differences over decade preceding each outbreak year
 for(year in 2011:2019){
-  malh.pred[[paste0(year)]] <- malh.pred[[paste0(year)]]-malh.nbr[[paste0(year-10)]]
+  malh.pred[[paste0(year)]] <- malh.pred[[paste0(year)]]-malh.nbr[[paste0(year-1)]]
 }
 
 for(year in 2011:2019){
   newdat <- malh.pred[[paste(year)]]
   names(newdat) <- "d_nbr_tot"
   newdat$case = "malh"
+  newdat$pine.prop.prev <- prop.ba.malh
   malh.pred[[paste(year)]] <- terra::predict(m0,newdat)
 }
 
@@ -325,13 +445,14 @@ klam.pred <- klam.nbr %>%
 
 #calculating NBR differences over decade preceding each outbreak year
 for(year in 2000:2016){
-  klam.pred[[paste0(year)]] <- klam.pred[[paste0(year)]]-klam.nbr[[paste0(year-10)]]
+  klam.pred[[paste0(year)]] <- klam.pred[[paste0(year)]]-klam.nbr[[paste0(year-1)]]
 }
 
 for(year in 2000:2016){
   newdat <- klam.pred[[paste(year)]]
   names(newdat) <- "d_nbr_tot"
   newdat$case = "klam"
+  newdat$pine.prop.prev <- prop.ba.klam
   klam.pred[[paste(year)]] <- terra::predict(m0,newdat)
 }
 
@@ -344,15 +465,250 @@ klam.pred.lcms <- ifel(is.na(klam.pred.lcms), NA, klam.pred)
 
 ### Spatial validation
 
+```{r}
+# data load and filters
+crla.fp <- sf::read_sf("data/ADS_data/shapefiles/crla_mpb_fp.shp") %>% 
+  sf::st_transform(crs = base.proj)
+
+crla.fia <- sf::st_filter(sp.fia, crla.fp)
+
+crla.nbr <- terra::rast("/Users/DanielPerret/Box/PlotsPlanesPixels/data/MPB_casestudy/crla/crlaNBR19852023.tif") %>% 
+  terra::project(base.proj)
+
+sp.list <- list.files(path = "C:/Users/DanielPerret/Box/01. daniel.perret Workspace/PROJECTS/plots-planes-pixels/data/gnn/rasters/mpb/",
+                      pattern = "*.tif$", recursive = TRUE, full.names = TRUE)
+
+# sp.ba.crla <- terra::rast(sp.list) %>% 
+#   terra::project(base.proj) %>% 
+#   terra::crop(crla.nbr) %>% 
+#   ifel(.<0,0,.)
+# 
+# prop.ba.crla <- sp.ba.crla[[1]]
+# prop.ba.crla[] <- (sp.ba.crla$pial_ba_2021[]+sp.ba.crla$pico_ba_2021[]+sp.ba.crla$pila_ba_2021[]+sp.ba.crla$pimo3_ba_2021[]+sp.ba.crla$pipo_ba_2021[])/sp.ba.crla$ba_ge_3_2021[]
+# prop.ba.crla <- prop.ba.crla %>% 
+#   terra::resample(crla.nbr) %>% 
+#   ifel(.>1, 1, .)
+# prop.ba.crla[is.na(crla.nbr$'1985')] <- NA
+
+
+#estimation
+
+crla.est <- rFIA::growMort(db = fia,
+                           polys = crla.fp,
+                           byPlot = T, bySpecies = T,
+                           returnSpatial = F,
+                           treeDomain = DIA>5,
+                           stateVar = "BAA",
+                           totals = T) %>% 
+  group_by(pltID) %>% 
+  filter(YEAR == max(YEAR)) %>% 
+  ungroup()
+
+crla.est.bah <- crla.est %>% 
+  mutate(pine = ifelse(SPCD%in%c(101,108,117,119,122),
+                       1,0)) %>% 
+  group_by(pltID) %>% 
+  summarise(pine.prop.prev = sum(PREV_BAA*pine)/sum(PREV_BAA),
+            pine.prop.curr = sum(CURR_BAA*pine)/sum(CURR_BAA),
+            pine.CHNG_BAA = sum(CHNG_BAA*pine),
+            other.BAA = sum(PREV_BAA)-sum(PREV_BAA*pine),
+            pine.BAA.curr = sum(CURR_BAA*pine),
+            pine.BAA.prev = sum(PREV_BAA*pine),
+            all.BAA.curr = sum(CURR_BAA),
+            all.BAA.prev = sum(PREV_BAA),
+            all.CHNG_BAA = sum(CHNG_BAA),
+            YEAR = first(YEAR),
+            PLT_CN = first(PLT_CN))
+
+crla.filt <- fia$COND %>% 
+  filter(PLT_CN %in% crla.est.bah$PLT_CN,
+         DSTRBCD1 %in% 10:12 |
+           DSTRBCD2 %in% 10:12 |
+           DSTRBCD3 %in% 10:12) %>% 
+  pull(PLT_CN) %>% unique()
+
+#extractions
+
+crla.ext <- terra::extract(crla.nbr,
+                           terra::vect(crla.fia) %>% 
+                             terra::buffer(width=45),
+                           fun = mean,
+                           na.rm = T, bind = T) %>% 
+  as.data.frame()
+
+# crla.ext.ba <- terra::extract(prop.ba.crla,
+#                               terra::vect(crla.fia) %>% 
+#                                 terra::buffer(width=45),
+#                               fun = mean,)
+
+crla.extract <- crla.ext %>% 
+  mutate(YEAR2 = MEASYEAR,
+         YEAR1 = as.integer(round(MEASYEAR-REMPER))) %>%
+  select(PLT_CN,YEAR1,YEAR2,REMPER,
+         contains("X")) %>% 
+  pivot_longer(cols = c(contains("X")),
+               names_to = "year",
+               values_to = "nbr") %>% 
+  mutate(year = as.integer(substr(year, start=2, stop = 5))) %>% 
+  filter(!is.na(REMPER)) %>% sf::st_drop_geometry() %>% 
+  ungroup() %>% 
+  rowwise() %>% 
+  filter(year %in% YEAR1:YEAR2) %>% 
+  group_by(PLT_CN) %>%   
+  mutate(d_nbr = nbr - lag(nbr),
+         di_nbr = nbr - first(nbr)) %>% view()
+ungroup() %>% 
+  mutate(nbr_t2 = ifelse(year == YEAR2,nbr,0),
+         nbr_t1 = ifelse(year == YEAR1,nbr,0),
+         d_nbr_ann = ifelse(year == YEAR2,d_nbr,0)) %>% 
+  group_by(PLT_CN,YEAR1,YEAR2,REMPER) %>% 
+  summarise(nbr_t2 = sum(nbr_t2),
+            nbr_t1 = sum(nbr_t1),
+            d_nbr_tot = sum(d_nbr, na.rm=T),
+            d_nbr_abs = sum(abs(d_nbr), na.rm=T),
+            di_nbr_tot = sum(di_nbr, na.rm=T)) %>% 
+  ungroup()
+
+#predictions
+
+
+crla.pred <- crla.est.bah %>% 
+  mutate(CHNG_TOT=pine.BAA.curr-pine.BAA.prev,
+         CHNG_TOT_ha = CHNG_TOT*0.2296) %>% 
+  # filter(PLT_CN %in% crla.filt) %>% 
+  left_join(.,
+            crla.extract %>% 
+              #filter(PLT_CN%in%crla.filt) %>% 
+              select(PLT_CN, d_nbr_tot) %>% 
+              mutate(pred = predict(m0,
+                                    newdata = crla.extract %>% 
+                                      #filter(PLT_CN %in% crla.filt) %>% 
+                                      select(PLT_CN, d_nbr_tot) %>%
+                                      left_join(crla.est.bah %>% 
+                                                  select(PLT_CN,pine.prop.prev)),
+                                    re.form = NA
+              )))
+
+
+crla.pred %>% 
+  ggplot(.,
+         aes(x = CHNG_TOT_ha,
+             y = pred)) +
+  geom_point(pch = 19,
+             alpha = 0.6,
+             size = 4,
+             aes(col=pine.prop.prev)) +
+  geom_abline(slope=1, intercept=0) +
+  geom_smooth() +
+  labs(x = "Observed BAA change", y = "Predicted BAA change")
+
+summary(lm(crla.pred$pred~crla.pred$CHNG_TOT_ha))
+
+cor(x=crla.pred$pred, y=crla.pred$CHNG_TOT_ha, use="pairwise.complete.obs")
+
+## validation R2 = 0.58, slope = 0.68, R = 0.76
+
+```
+
+
 ### Figures
 
 Model fit figure
 ```{r}
+
+ggeffects::ggpredict(model = m0, 
+                     terms = c("d_nbr_tot [-300:250, by = 10]",
+                               "pine.prop.prev [0.25, 1]",
+                               "case [klam, malh]"),
+                     type = "re") %>% 
+  rename(d_nbr_tot = x,
+         pine.prop.prev = group,
+         case = facet) %>% 
+  ggplot(.,
+         aes(x = d_nbr_tot/1000,
+             y = predicted,
+             #group = case
+         )) +
+  geom_line(aes(col = pine.prop.prev,
+                lty = case),
+            alpha = 0.8,
+            lwd=2)+
+  geom_point(inherit.aes=F,
+             data = mpb.dat %>% 
+               #filter(case == "malh") %>% 
+               mutate(prop.group = case_when(pine.prop.prev < 0.25 ~ 0.25,
+                                             pine.prop.prev < 0.5 & 
+                                               pine.prop.prev >= 0.25 ~ 0.5,
+                                             pine.prop.prev < 0.75 & 
+                                               pine.prop.prev >= 0.5 ~ 0.75,
+                                             pine.prop.prev <= 1 & 
+                                               pine.prop.prev >= 0.75 ~ 1
+               )) %>% 
+               na.omit(),
+             aes(x = d_nbr_tot/1000,
+                 y = CHNG_BAA_TOT_ha,
+                 col = as.character(prop.group),
+                 pch = case),
+             size = 3, alpha = 0.4) +
+  geom_ribbon(aes(lty = case,
+                  ymin = conf.low,
+                  ymax = conf.high,
+                  fill = pine.prop.prev),
+              alpha = 0.1) +
+  scale_color_manual(values = c("0.25" = "darkgoldenrod4",
+                                "0.5" = "darkgoldenrod2",
+                                "0.75" = "darkolivegreen3",
+                                "1" = "forestgreen"),
+                     aesthetics = c("fill","col"),
+                     name = "Pine proportion") + 
+  labs(x = "dNBR", y = "Net basal area change (HOST)")
+
+
+ggeffects::ggpredict(model = m0, 
+                     terms = c("d_nbr_tot [-350:275, by = 10]",
+                               "pine.prop.prev [0.25,0.5,0.75, 1]")) %>% 
+  rename(d_nbr_tot = x,
+         pine.prop.prev = group) %>% 
+  ggplot(.,
+         aes(x = d_nbr_tot/1000,
+             y = predicted)) +
+  geom_line(aes(col = pine.prop.prev),
+            alpha = 0.8,
+            lwd=2)+
+  geom_point(inherit.aes=F,
+             data = mpb.dat %>% 
+               mutate(prop.group = case_when(pine.prop.prev < 0.25 ~ 0.25,
+                                             pine.prop.prev < 0.5 & 
+                                               pine.prop.prev >= 0.25 ~ 0.5,
+                                             pine.prop.prev < 0.75 & 
+                                               pine.prop.prev >= 0.5 ~ 0.75,
+                                             pine.prop.prev <= 1 & 
+                                               pine.prop.prev >= 0.75 ~ 1
+               )) %>% 
+               na.omit(),
+             aes(x = d_nbr_tot/1000,
+                 y = CHNG_BAA_TOT_ha,
+                 col = as.character(prop.group)),
+             size = 3, alpha = 0.4) +
+  geom_ribbon(aes(ymin = conf.low,
+                  ymax = conf.high,
+                  fill = pine.prop.prev),
+              alpha = 0.1) +
+  scale_color_manual(values = c("0.25" = "darkgoldenrod4",
+                                "0.5" = "darkgoldenrod2",
+                                "0.75" = "darkolivegreen3",
+                                "1" = "forestgreen"),
+                     aesthetics = c("fill","col"),
+                     name = "Pine proportion") + 
+  labs(x = "dNBR", y = "Net basal area change (HOST)")+
+  theme(legend.position="none")
+
+
 mpb.dat %>% 
   bind_cols(predict(m0,se = T)) %>% 
   ggplot(.,
-         aes(x = d_nbr_tot,
-             y = (CHNG_BAA_TOT),
+         aes(x = d_nbr_tot/1000,
+             y = (CHNG_BAA_TOT_ha),
              col = case)) +
   geom_point(cex = 3, alpha = 0.6) +
   geom_ribbon(aes(ymin = fit-(se.fit*1.96),
@@ -364,55 +720,56 @@ mpb.dat %>%
   geom_line(aes(y = fit),
             lwd=1.5) +
   labs(x = "NBR change (net)",
-       y = "Basal area change (ft2/ac)")
+       y = "Basal area change (m2/ha)")+
+  theme(legend.position="none")
 ```
 
 Annual maps (as for gif)
 ```{r}
 ## MALH
-
-ext <- sf::st_bbox(malh.fp %>% sf::st_transform(crs=CRS(old.proj)))
-names(ext) <- c("left","bottom","right","top")
-
-register_stadiamaps("d0a45b35-73bc-47d3-a8c7-8a0be7f39dc6")
-malh.map <- get_stadiamap(bbox = ext, mapytpe = "stamen_terrain",)
-
-
-for(year in names(malh.pred.lcms)){
-  
-  p <- ggmap(malh.map) +
-    geom_sf(data = malh.fp %>% 
-              sf::st_transform(crs=CRS(old.proj)),
-            inherit.aes = F,
-            fill=NA,
-            col = "black",
-            lwd=1.5) +
-    geom_raster(data = malh.pred.lcms[[year]] %>%
-                  terra::project(CRS(old.proj)) %>% 
-                  as.data.frame(.,xy=T) %>% 
-                  rename(val = 3),
-                aes(x = x, y = y, fill = val)) +
-    scale_fill_gradient2(low = "indianred2",mid="white",high = "dodgerblue2",
-                         midpoint=0,
-                         aesthetics = "fill", 
-                         guide = "legend", 
-                         limits = c(-300,200),
-                         n.breaks = 9,
-                         na.value="transparent",
-                         name="BAH\n(m2/ha)") +
-    labs(x = "Longitude", y = "Latitude",title = year) +
-    theme(axis.text.x = element_text(angle = 45, hjust=1))
-  
-  
-  ggsave(filename = paste0("figures/new_gifs/malh/",year,".jpg"), 
-         plot = p,
-         width = 12,
-         height = 9,
-         units = "in",
-         dpi = 150)
-  
-}
-## KLAM
+# 
+# ext <- sf::st_bbox(malh.fp %>% sf::st_transform(crs=CRS(old.proj)))
+# names(ext) <- c("left","bottom","right","top")
+# 
+# register_stadiamaps("d0a45b35-73bc-47d3-a8c7-8a0be7f39dc6")
+# malh.map <- get_stadiamap(bbox = ext, mapytpe = "stamen_terrain",)
+# 
+# 
+# for(year in names(malh.pred.lcms)){
+#   
+#   p <- ggmap(malh.map) +
+#     geom_sf(data = malh.fp %>% 
+#               sf::st_transform(crs=CRS(old.proj)),
+#             inherit.aes = F,
+#             fill=NA,
+#             col = "black",
+#             lwd=1.5) +
+#     geom_raster(data = malh.pred.lcms[[year]] %>%
+#                   terra::project(CRS(old.proj)) %>% 
+#                   as.data.frame(.,xy=T) %>% 
+#                   rename(val = 3),
+#                 aes(x = x, y = y, fill = val)) +
+#     scale_fill_gradient2(low = "indianred2",mid="white",high = "dodgerblue2",
+#                          midpoint=0,
+#                          aesthetics = "fill", 
+#                          guide = "legend", 
+#                          limits = c(-300,200),
+#                          n.breaks = 9,
+#                          na.value="transparent",
+#                          name="BAH\n(m2/ha)") +
+#     labs(x = "Longitude", y = "Latitude",title = year) +
+#     theme(axis.text.x = element_text(angle = 45, hjust=1))
+#   
+#   
+#   ggsave(filename = paste0("figures/new_gifs/malh/",year,".jpg"), 
+#          plot = p,
+#          width = 12,
+#          height = 9,
+#          units = "in",
+#          dpi = 150)
+#   
+# }
+# ## KLAM
 
 ext <- sf::st_bbox(klam.fp %>% sf::st_transform(crs=CRS(old.proj)))
 names(ext) <- c("left","bottom","right","top")
@@ -422,39 +779,39 @@ klam.map <- get_stadiamap(bbox = ext, mapytpe = "stamen_terrain",)
 
 
 for(year in names(klam.pred.lcms)){
-  
+
   p <- ggmap(klam.map) +
-    geom_sf(data = klam.fp %>% 
+    geom_sf(data = klam.fp %>%
               sf::st_transform(crs=CRS(old.proj)),
             inherit.aes = F,
             fill=NA,
             col = "black",
             lwd=1.5) +
-    geom_raster(data = klam.pred.lcms[[year]] %>%
-                  terra::project(CRS(old.proj)) %>% 
-                  as.data.frame(.,xy=T) %>% 
+    geom_tile(data = klam.pred.lcms[[year]] %>%
+                  terra::project(CRS(old.proj)) %>%
+                  as.data.frame(.,xy=T) %>%
                   rename(val = 3),
                 aes(x = x, y = y, fill = val)) +
-    scale_fill_gradient2(low = "indianred2",mid="white",high = "dodgerblue2",
+    scale_fill_gradient2(low = "firebrick3",mid="white",high = "dodgerblue2",
                          midpoint=0,
-                         aesthetics = "fill", 
-                         guide = "legend", 
-                         limits = c(-300,200),
-                         n.breaks = 9,
-                         na.value="transparent",
+                         aesthetics = "fill",
+                         guide = "legend",
+                         limits = c(-35,5),
+                         n.breaks = 7,
+                         oob = scales::squish,
                          name="BAH\n(m2/ha)") +
     labs(x = "Longitude", y = "Latitude",title = year) +
     theme(axis.text.x = element_text(angle = 45, hjust=1))
-  
-  
-  ggsave(filename = paste0("figures/new_gifs/klam/",year,".jpg"), 
+
+
+  ggsave(filename = paste0("figures/new_gifs/klam2/",year,".jpg"),
          plot = p,
-         width = 12,
-         height = 9,
+         width = 8,
+         height = 6,
          units = "in",
          dpi = 150)
-  
-}
+
+ }
 
 
 ```
@@ -497,7 +854,7 @@ psme.ba <- terra::rast("C:/Users/DanielPerret/Box/PlotsPlanesPixels/data/GNN/all
   terra::crop(psme.nbr) %>% 
   ifel(.<0,0,.)
 
-prop.ba <- (psme.ba/all.ba) %>% 
+prop.ba.psme <- (psme.ba/all.ba) %>% 
   terra::resample(psme.nbr) %>% 
   ifel(.>1, 1, .)
 
@@ -508,7 +865,7 @@ prop.ba <- (psme.ba/all.ba) %>%
 ```{r}
 
 psme.fia <- sf::st_filter(sp.fia, psme.fp) %>% 
-  filter(MEASYEAR %in% c(2010:2021))
+  filter(MEASYEAR %in% c(2015:2023))
 
 psme.ext <- terra::extract(psme.nbr, 
                            terra::vect(psme.fia) %>% 
@@ -593,10 +950,12 @@ psme.dat <- psme.est.bah %>%
   left_join(psme.extract,
             by = c("PLT_CN")) %>% 
   filter(#PLT_CN %in% cond.filt,
-    !is.na(d_nbr_tot)) %>% 
-  mutate(CHNG_BAA_TOT = CURR_BAA - PREV_BAA)
+    !is.na(d_nbr_tot),
+    YEAR>2014) %>% 
+  mutate(CHNG_BAA_TOT = CURR_BAA - PREV_BAA,
+         CHNG_BAA_TOT_ha = CHNG_BAA_TOT*0.2296) # this is just psme CHNG
 
-m0 <- lm(CHNG_BAA_TOT ~ d_nbr_tot*PSME.prop, data = psme.dat)
+m1 <- lm(CHNG_BAA_TOT_ha ~ d_nbr_tot*PSME.prop, data = psme.dat)
 
 
 ```
@@ -606,24 +965,24 @@ m0 <- lm(CHNG_BAA_TOT ~ d_nbr_tot*PSME.prop, data = psme.dat)
 ```{r}
 
 psme.pred <- psme.nbr %>% 
-  subset(paste0(2010:2020))
+  subset(paste0(2015:2023))
 
 #calculating NBR differences over decade preceding each outbreak year
-for(year in 2010:2020){
-  psme.pred[[paste0(year)]] <- psme.pred[[paste0(year)]]-psme.nbr[[paste0(year-10)]]
+for(year in 2015:2023){
+  psme.pred[[paste0(year)]] <- psme.pred[[paste0(year)]]-psme.nbr[[paste0(year-1)]]
 }
 
 #prediction over raster for each year in outbreak timeseries
-for(year in 2010:2020){
+for(year in 2015:2023){
   newdat <- psme.pred[[paste(year)]]
   names(newdat) <- "d_nbr_tot"
-  newdat$PSME.prop <- prop.ba
-  psme.pred[[paste(year)]] <- terra::predict(m0,newdat)
+  newdat$PSME.prop <- prop.ba.psme
+  psme.pred[[paste(year)]] <- terra::predict(newdat, m1)
 }
 
 #limiting predictions to LCMS-identified pixels
 psme.pred.lcms <- psme.lcms %>% 
-  subset(paste0("cause_",2010:2020)) 
+  subset(paste0("cause_",2015:2023)) 
 
 psme.pred.lcms <- ifel(is.na(psme.pred.lcms), NA, psme.pred)
 
@@ -639,8 +998,8 @@ Model fit, interactions
 ```{r}
 
 
-ggeffects::ggpredict(model = m0, 
-                     terms = c("d_nbr_tot [-500:500, by = 10]",
+ggeffects::ggpredict(model = m1, 
+                     terms = c("d_nbr_tot [-750:500, by = 10]",
                                "PSME.prop [0.25, 0.5, 0.75, 1]")) %>% 
   rename(d_nbr_tot = x,
          PSME.prop = group) %>% 
@@ -657,7 +1016,7 @@ ggeffects::ggpredict(model = m0,
                )) %>% 
                na.omit(),
              aes(x = d_nbr_tot/1000,
-                 y = CHNG_BAA_TOT,
+                 y = CHNG_BAA_TOT_ha,
                  col = as.character(prop.group)),
              pch = 19, size = 3, alpha = 0.4) +
   geom_ribbon(aes(ymin = conf.low,
@@ -673,54 +1032,55 @@ ggeffects::ggpredict(model = m0,
                                 "1" = "forestgreen"),
                      aesthetics = c("fill","col"),
                      name = "PSME proportion") + 
-  labs(x = "dNBR", y = "Net basal area change")
+  labs(x = "dNBR", y = "Net basal area change") +
+  theme(legend.position = "none")
 
 ```
 
 Annual maps
 ```{r}
-
-ext <- sf::st_bbox(psme.fp %>% sf::st_transform(crs=CRS(old.proj)))
-names(ext) <- c("left","bottom","right","top")
-
-register_stadiamaps("d0a45b35-73bc-47d3-a8c7-8a0be7f39dc6")
-psme.map <- get_stadiamap(bbox = ext, mapytpe = "stamen_terrain",)
-
-
-for(year in names(psme.pred.lcms)){
-  
-  p <- ggmap(psme.map) +
-    geom_sf(data = psme.fp %>% 
-              sf::st_transform(crs=CRS(old.proj)),
-            inherit.aes = F,
-            fill=NA,
-            col = "black",
-            lwd=1.5) +
-    geom_raster(data = psme.pred.lcms[[year]] %>%
-                  terra::project(CRS(old.proj)) %>% 
-                  as.data.frame(.,xy=T) %>% 
-                  rename(val = 3),
-                aes(x = x, y = y, fill = val)) +
-    scale_fill_gradient2(low = "indianred2",mid="white",high = "dodgerblue2",
-                         midpoint=0,
-                         aesthetics = "fill", 
-                         guide = "legend", 
-                         limits = c(-100,50),
-                         n.breaks = 9,
-                         na.value="transparent",
-                         name="BAH\n(m2/ha)") +
-    labs(x = "Longitude", y = "Latitude",title = year) +
-    theme(axis.text.x = element_text(angle = 45, hjust=1))
-  
-  
-  ggsave(filename = paste0("figures/new_gifs/psme/",year,".jpg"), 
-         plot = p,
-         width = 12,
-         height = 9,
-         units = "in",
-         dpi = 150)
-  
-}
+# 
+# ext <- sf::st_bbox(psme.fp %>% sf::st_transform(crs=CRS(old.proj)))
+# names(ext) <- c("left","bottom","right","top")
+# 
+# register_stadiamaps("d0a45b35-73bc-47d3-a8c7-8a0be7f39dc6")
+# psme.map <- get_stadiamap(bbox = ext, mapytpe = "stamen_terrain",)
+# 
+# 
+# for(year in names(psme.pred.lcms)){
+#   
+#   p <- ggmap(psme.map) +
+#     geom_sf(data = psme.fp %>% 
+#               sf::st_transform(crs=CRS(old.proj)),
+#             inherit.aes = F,
+#             fill=NA,
+#             col = "black",
+#             lwd=1.5) +
+#     geom_raster(data = psme.pred.lcms[[year]] %>%
+#                   terra::project(CRS(old.proj)) %>% 
+#                   as.data.frame(.,xy=T) %>% 
+#                   rename(val = 3),
+#                 aes(x = x, y = y, fill = val)) +
+#     scale_fill_gradient2(low = "indianred2",mid="white",high = "dodgerblue2",
+#                          midpoint=0,
+#                          aesthetics = "fill", 
+#                          guide = "legend", 
+#                          limits = c(-100,50),
+#                          n.breaks = 9,
+#                          na.value="transparent",
+#                          name="BAH\n(m2/ha)") +
+#     labs(x = "Longitude", y = "Latitude",title = year) +
+#     theme(axis.text.x = element_text(angle = 45, hjust=1))
+#   
+#   
+#   ggsave(filename = paste0("figures/new_gifs/psme/",year,".jpg"), 
+#          plot = p,
+#          width = 12,
+#          height = 9,
+#          units = "in",
+#          dpi = 150)
+#   
+# }
 ```
 
 ## Case study 3: Fir engraver in mixed conifer forest
@@ -753,46 +1113,2024 @@ all.ba <- terra::rast("C:/Users/DanielPerret/Box/PlotsPlanesPixels/data/GNN/all_
   terra::crop(ocho.nbr) %>% 
   ifel(.<0,0,.)
 
-ocho.ba <- terra::rast("C:/Users/DanielPerret/Box/PlotsPlanesPixels/data/GNN/all_OR/rasters/gnn.2023.1/ocho_ba_2021.tif") %>% 
+sp.list <- list.files(path = "C:/Users/DanielPerret/Box/01. daniel.perret Workspace/PROJECTS/plots-planes-pixels/data/gnn/rasters/gnn.2023.1/",
+                      pattern = "*.tif$", recursive = TRUE, full.names = TRUE)
+
+sp.ba <- terra::rast(sp.list) %>% 
   terra::project(., CRS(base.proj)) %>% 
   terra::crop(ocho.nbr) %>% 
   ifel(.<0,0,.)
 
-prop.ba <- (ocho.ba/all.ba) %>% 
+prop.ba.ocho <- sp.ba[[1]]
+prop.ba.ocho[] <- (sp.ba$abam_ba_2021[]+sp.ba$abgrc_ba_2021[]+sp.ba$abla_ba_2021[]+sp.ba$abprsh_ba_2021[]+sp.ba$psme_ba_2021[])/all.ba$ba_ge_3_2021[]
+
+prop.ba.ocho <- prop.ba.ocho %>% 
   terra::resample(ocho.nbr) %>% 
+  #terra::mask(ocho.nbr) %>% 
   ifel(.>1, 1, .)
+
+prop.ba.ocho[is.na(ocho.nbr$'1985')] <- NA
 
 ```
 ### Extractions
 
+```{r}
+
+ocho.fia <- sf::st_filter(sp.fia, ocho.fp) %>% 
+  filter(MEASYEAR %in% c(2020:2023))
+
+ocho.ext <- terra::extract(ocho.nbr, 
+                           terra::vect(ocho.fia) %>% 
+                             terra::buffer(width = 45),
+                           fun = mean,
+                           na.rm = T, bind = T) %>% 
+  as.data.frame()
+
+ocho.extract <- ocho.ext %>% 
+  mutate(case = "ocho") %>% 
+  mutate(YEAR2 = MEASYEAR,
+         YEAR1 = as.integer(round(MEASYEAR-REMPER))) %>%
+  select(PLT_CN,YEAR1,YEAR2,REMPER, 
+         contains("X")) %>%
+  select(-LAT_EXACT, -LON_EXACT, -SUBP_EXAMINE_CD) %>% 
+  pivot_longer(cols = c(contains("X")),
+               names_to = "year",
+               values_to = "nbr") %>%
+  mutate(year = as.integer(substr(year, start=2, stop = 5))) %>% 
+  filter(!is.na(REMPER)) %>% sf::st_drop_geometry() %>% 
+  ungroup() %>% 
+  rowwise() %>% 
+  filter(year %in% YEAR1:YEAR2) %>% 
+  group_by(PLT_CN) %>%   
+  mutate(d_nbr = nbr - lag(nbr),
+         di_nbr = nbr - first(nbr)) %>%
+  ungroup() %>% 
+  mutate(nbr_t2 = ifelse(year == YEAR2,nbr,0),
+         nbr_t1 = ifelse(year == YEAR1,nbr,0),
+         d_nbr_ann = ifelse(year == YEAR2,d_nbr,0)) %>% 
+  group_by(PLT_CN,YEAR1,YEAR2,REMPER) %>% 
+  summarise(nbr_t2 = sum(nbr_t2),
+            nbr_t1 = sum(nbr_t1),
+            d_nbr_tot = sum(d_nbr, na.rm=T),
+            d_nbr_abs = sum(abs(d_nbr), na.rm=T),
+            di_nbr_tot = sum(di_nbr, na.rm=T)) %>% 
+  ungroup()
+
+```
+
 ### Change estimation
+
+```{r}
+
+est <- rFIA::growMort(db = fia,
+                      polys = ocho.fp,
+                      byPlot = T, 
+                      bySpecies = T,
+                      returnSpatial = F,
+                      treeDomain = DIA>5,
+                      stateVar = "BAA",
+                      totals = T) %>% 
+  group_by(pltID) %>% 
+  filter(YEAR == max(YEAR)) %>% 
+  ungroup()
+
+abies.est.bah <- est %>% 
+  mutate(abies = ifelse(SPCD%in%c(15,17,19,22,202),
+                        1,0)) %>% 
+  group_by(pltID) %>% 
+  summarise(abies.prop.prev = sum(PREV_BAA*abies)/sum(PREV_BAA),
+            abies.prop.curr = sum(CURR_BAA*abies)/sum(CURR_BAA),
+            abies.CHNG_BAA = sum(CHNG_BAA*abies),
+            other.BAA = sum(PREV_BAA)-sum(PREV_BAA*abies),
+            abies.BAA.curr = sum(CURR_BAA*abies),
+            abies.BAA.prev = sum(PREV_BAA*abies),
+            all.BAA.curr = sum(CURR_BAA),
+            all.BAA.prev = sum(PREV_BAA),
+            all.CHNG_BAA = sum(CHNG_BAA),
+            YEAR = first(YEAR),
+            PLT_CN = first(PLT_CN))
+
+
+
+```
+
 
 ### Modeling
 
+```{r}
+
+ocho.dat <- abies.est.bah %>% 
+  left_join(ocho.extract,
+            by = c("PLT_CN")) %>% 
+  left_join(ocho.fia %>% 
+              sf::st_drop_geometry() %>% 
+              select(PLT_CN,MEASYEAR)) %>% 
+  mutate(CHNG_BAA_TOT = abies.BAA.curr - abies.BAA.prev,
+         CHNG_BAA_TOT_ha = CHNG_BAA_TOT*0.2296) %>% 
+  filter(abies.prop.prev > 0,
+         !is.na(d_nbr_tot),
+         MEASYEAR<2022)
+
+
+m2 <- lm(CHNG_BAA_TOT_ha ~ d_nbr_tot*abies.prop.prev, data = ocho.dat)
+
+summary(m2)
+
+```
+
 ### Prediction
+
+```{r}
+
+ocho.pred <- ocho.nbr %>% 
+  subset(paste0(2016:2023))
+
+#calculating NBR differences over decade preceding each outbreak year
+for(year in 2016:2023){
+  ocho.pred[[paste0(year)]] <- ocho.pred[[paste0(year)]]-ocho.nbr[[paste0(year-1)]]
+}
+
+#prediction over raster for each year in outbreak timeseries
+for(year in 2016:2023){
+  newdat <- ocho.pred[[paste(year)]]
+  names(newdat) <- "d_nbr_tot"
+  newdat$abies.prop.prev <- prop.ba.ocho
+  ocho.pred[[paste(year)]] <- terra::predict(newdat,m2) 
+}
+
+#limiting predictions to LCMS-identified pixels
+ocho.pred.lcms <- ocho.lcms %>% 
+  subset(paste0("cause_",2016:2023)) 
+
+ocho.pred.lcms <- ifel(is.na(ocho.pred.lcms), NA, ocho.pred)
+
+```
+
 
 ### Temporal validation
 
+```{r}
+
+valid.dat <- abies.est.bah %>% 
+  left_join(ocho.extract,
+            by = c("PLT_CN")) %>% 
+  left_join(ocho.fia %>% 
+              sf::st_drop_geometry() %>% 
+              select(PLT_CN,MEASYEAR)) %>% 
+  mutate(CHNG_BAA_TOT = abies.BAA.curr - abies.BAA.prev,
+         CHNG_BAA_TOT_ha = CHNG_BAA_TOT*0.2296) %>% 
+  filter(abies.prop.prev > 0,
+         !is.na(d_nbr_tot),
+         MEASYEAR>2021)
+
+valid.pred <- valid.dat %>% 
+  mutate(pred = predict(m2,newdata = valid.dat %>% 
+                          select(d_nbr_tot,abies.prop.prev)))
+
+
+valid.pred %>% 
+  ggplot(.,
+         aes(x = CHNG_BAA_TOT_ha,
+             y = pred)) +
+  geom_point(pch = 19,
+             alpha = 0.6,
+             size = 4) +
+  geom_abline(slope=1, intercept=0) +
+  geom_smooth() +
+  labs(x = "Observed BAA change", y = "Predicted BAA change")
+
+summary(lm(valid.pred$pred~valid.pred$CHNG_BAA_TOT_ha))
+
+cor(x=valid.pred$pred, y=valid.pred$CHNG_BAA_TOT_ha, use="pairwise.complete.obs")
+
+## VALIDATION R2 = 0.62, slope = 0.73, R = 0.79
+
+```
+
 ### Figures
 
+#### model fit, itneractions
+```{r}
+
+ggeffects::ggpredict(model = m2, 
+                     terms = c("d_nbr_tot [-200:200, by = 10]",
+                               "abies.prop.prev [0.25, 0.5, 0.75, 1]")) %>% 
+  rename(d_nbr_tot = x,
+         abies.prop.prev = group) %>% 
+  ggplot(.,
+         aes(x = d_nbr_tot/1000,
+             y = predicted,
+             group = abies.prop.prev)) +
+  geom_point(inherit.aes=F,
+             data = ocho.dat %>% 
+               mutate(prop.group = case_when(abies.prop.prev < 0.25 ~ 0.25,
+                                             abies.prop.prev < 0.5 & abies.prop.prev >= 0.25 ~ 0.5,
+                                             abies.prop.prev < 0.75 & abies.prop.prev >= 0.5 ~ 0.75,
+                                             abies.prop.prev <= 1 & abies.prop.prev >= 0.75 ~ 1
+               )) %>% 
+               na.omit(),
+             aes(x = d_nbr_tot/1000,
+                 y = CHNG_BAA_TOT_ha,
+                 col = as.character(prop.group)),
+             pch = 19, size = 3, alpha = 0.4) +
+  geom_ribbon(aes(ymin = conf.low,
+                  ymax = conf.high,
+                  fill = abies.prop.prev),
+              alpha = 0.1) +
+  geom_line(aes(col = abies.prop.prev),
+            alpha = 0.8,
+            lwd=2) +
+  scale_color_manual(values = c("0.25" = "darkgoldenrod4",
+                                "0.5" = "darkgoldenrod2",
+                                "0.75" = "darkolivegreen3",
+                                "1" = "forestgreen"),
+                     aesthetics = c("fill","col"),
+                     name = "Abies proportion") + 
+  labs(x = "dNBR", y = "Net basal area change (HOST)") +
+  theme(legend.position="none")
+
+```
+#### annual maps
+
+```{r}
+# 
+# ext <- sf::st_bbox(ocho.fp %>% sf::st_transform(crs=CRS(old.proj)))
+# names(ext) <- c("left","bottom","right","top")
+# 
+# register_stadiamaps("d0a45b35-73bc-47d3-a8c7-8a0be7f39dc6")
+# ocho.map <- get_stadiamap(bbox = ext, mapytpe = "stamen_terrain",)
+# 
+# 
+# for(year in names(ocho.pred.lcms)){
+#   
+#   p <- ggmap(ocho.map) +
+#     geom_sf(data = ocho.fp %>% 
+#               sf::st_transform(crs=CRS(old.proj)),
+#             inherit.aes = F,
+#             fill=NA,
+#             col = "black",
+#             lwd=1.5) +
+#     geom_tile(data = ocho.pred.lcms[[year]] %>%
+#                   terra::project(CRS(old.proj)) %>% 
+#                   as.data.frame(.,xy=T) %>% 
+#                   rename(val = 3),
+#                 aes(x = x, y = y, fill = val)) +
+#     scale_fill_gradient2(low = "indianred2",mid="white",high = "dodgerblue2",
+#                          midpoint=0,
+#                          aesthetics = "fill", 
+#                          guide = "legend", 
+#                          limits = c(-100,50),
+#                          n.breaks = 9,
+#                          na.value="transparent",
+#                          name="BAH\n(m2/ha)") +
+#     labs(x = "Longitude", y = "Latitude",title = year) +
+#     theme(axis.text.x = element_text(angle = 45, hjust=1))
+#   
+#   
+#   ggsave(filename = paste0("figures/new_gifs/ocho/",year,".jpg"), 
+#          plot = p,
+#          width = 12,
+#          height = 9,
+#          units = "in",
+#          dpi = 300)
+#   
+# }
+
+```
+
+## Model comparisons
+
+### Taylor diagram
+```{r}
+
+taylor.diagram(ref = m0@frame$CHNG_BAA_TOT_ha,
+               model = fitted(m0),
+               normalize = T,
+               pos.cor = T,
+               col = "gold3",
+               pch = 19,
+               pcex = 2.5,
+               main = "")
+taylor.diagram(ref = crla.pred$CHNG_TOT_ha,
+               model = crla.pred$pred,
+               normalize = T,
+               pos.cor = T,
+               add=T,
+               col = "gold3",
+               pch = 1,
+               pcex = 2.5)
 
 
-## Data and model comparisons
+taylor.diagram(ref = m1$model$CHNG_BAA_TOT_ha,
+               model = fitted(m1),
+               normalize = T,
+               pos.cor = T,
+               add=T,
+               col = "dodgerblue3",
+               pch = 19,
+               pcex = 2.5)
 
-## Draft manuscript figures
+taylor.diagram(ref = m2$model$CHNG_BAA_TOT_ha,
+               model = fitted(m2),
+               normalize = T,
+               pos.cor = T,
+               add=T,
+               col = "firebrick2",
+               pch = 19,
+               pcex = 2.5)
+taylor.diagram(ref = valid.pred$CHNG_BAA_TOT_ha,
+               model = valid.pred$pred,
+               normalize = T,
+               pos.cor = T,
+               add=T,
+               col = "firebrick2",
+               pch = 1,
+               pcex = 2.5)
+
+# legend(x = "topright",
+#        legend = c("FE","FFB","MPB"),
+#        col = c("firebrick2", "dodgerblue3","gold3"),
+#        pch=19,
+#        cex = 1.5)
+
+
+```
+## Modeled severity timeseries
+
+### MPB
+
+#### Malheur
+
+```{r}
+## basal area loss timeseries
+
+malh.loss <- data.frame(year = as.numeric(names(malh.pred.lcms)),
+                        ba_loss = NA)
+
+for(i in 1:nlyr(malh.pred.lcms)){
+  loss <- mean(malh.pred.lcms[[i]][], na.rm=T)*(sum(!is.na(malh.lcms[[i]][]))*0.09)
+  malh.loss$ba_loss[i] <- loss
+}
+
+
+malh.loss %>% 
+  filter(year %in% 2012:2019) %>% 
+  ggplot(.,
+         aes(x = year,
+             y = -ba_loss)) +
+  geom_line(lwd = 1.5) +
+  scale_x_continuous(breaks = malh.loss$year)
+
+## area in severity bins timeseries
+
+breaks <- malh.pred.lcms %>% 
+  terra::values() %>% 
+  quantile(.,
+           probs = c(0,0.25,0.5,0.75,1), na.rm=T)
+
+malh.pred.class <- malh.pred.lcms
+
+for(i in 1:nlyr(malh.pred.lcms)){
+  mat <- matrix(c(breaks[1], breaks[2], breaks[3], breaks[4],
+                  breaks[2], breaks[3], breaks[4], breaks[5],
+                  4,3,2,1),
+                ncol=3)
+  malh.pred.class[[i]] <- terra::classify(x = malh.pred.lcms[[i]],
+                                          rcl = mat,
+                                          include.lowest=T)
+}
+
+malh.loss.area <- freq(malh.pred.class) %>% 
+  as.data.frame() %>% 
+  mutate(year = rep(2011:2019, each=4),
+         class = case_when(value==1 ~ "low",
+                           value==2 ~ "mod",
+                           value==3 ~ "cons",
+                           value==4 ~ "high"),
+         ha = count*0.09) %>% 
+  select(-layer, -value)
+
+malh.loss.area %>% 
+  filter(year %in% 2012:2019) %>% 
+  mutate(class_fac = factor(class, levels = c("high","cons","mod","low"))) %>% 
+  ggplot(.,
+         aes(x=year,
+             y=ha)) +
+  geom_area(aes(col = class_fac,
+                fill = class_fac),
+            lwd=1.5) +
+  scale_x_continuous(breaks=malh.loss.area$year)+
+  scale_color_manual(values = c("low" = "tan",
+                                "mod" = "gold2",
+                                "cons" = "orange",
+                                "high" = "firebrick2"),
+                     aesthetics = c("col", "fill"),
+                     name = "Severity class") +
+  labs(x = "Year",
+       y = "Damaged area (ha)")+
+  theme(axis.text.x = element_text(angle = 45,hjust=1)) +
+  lims(y=c(0,30000)) +
+  theme(legend.position="none")
+
+# 
+# malh.loss.area %>% 
+#   filter(year %in% 2012:2019) %>% 
+#   mutate(class_fac = factor(class, levels = c("high","cons","mod","low"))) %>% 
+#   ggplot(.,
+#          aes(x=year,
+#              y=ha)) +
+#   geom_area(aes(col = class_fac,
+#                 fill = class_fac),
+#             lwd=1.5) +
+#   geom_line(data = malh.ads.area,
+#             aes(x = SURVEY_YEA,
+#                 y = AREA_m_mpb/1e4,
+#                 lty = "ADS"),
+#             lwd=2,
+#             alpha = 0.6) +
+#   geom_line(data = malh.area,
+#             aes(x = MEASYEAR,
+#                 y = AREA_TOTAL_ha,
+#                 lty = "FIA"),
+#             lwd = 2,
+#             alpha = 0.5)+
+#   scale_x_continuous(breaks=malh.loss.area$year)+
+#   scale_color_manual(values = c("low" = "tan",
+#                                 "mod" = "gold2",
+#                                 "cons" = "orange",
+#                                 "high" = "firebrick2"),
+#                      aesthetics = c("col", "fill"),
+#                      name = "Severity class") +
+#   labs(x = "Year",
+#        y = "Damaged area (ha)")+
+#   theme(axis.text.x = element_text(angle = 45,hjust=1))+
+#   scale_linetype_manual(values = c("ADS" = 1,
+#                                    "FIA" = 2),
+#                         name = "Data")
+
+
+```
+
+#### Klamath
+
+```{r}
+## basal area loss timeseries
+
+klam.loss <- data.frame(year = as.numeric(names(klam.pred.lcms)),
+                        ba_loss = NA)
+
+for(i in 1:nlyr(klam.pred.lcms)){
+  loss <- mean(klam.pred.lcms[[i]][], na.rm=T)*(sum(!is.na(klam.lcms[[i]][]))*0.09)
+  klam.loss$ba_loss[i] <- loss
+}
+
+klam.loss %>% 
+  filter(year %in% 2003:2016) %>% 
+  ggplot(.,
+         aes(x = year,
+             y = -ba_loss)) +
+  geom_line(lwd = 1.5) +
+  scale_x_continuous(breaks = klam.loss$year)
+
+## area in severity bins timeseries
+
+breaks <- klam.pred.lcms %>% 
+  terra::values() %>% 
+  quantile(.,
+           probs = c(0,0.25,0.5,0.75,1), na.rm=T)
+
+klam.pred.class <- klam.pred.lcms
+for(i in 1:nlyr(klam.pred.lcms)){
+  mat <- matrix(c(breaks[1], breaks[2], breaks[3], breaks[4],
+                  breaks[2], breaks[3], breaks[4],breaks[5],
+                  4,3,2,1),
+                ncol=3)
+  klam.pred.class[[i]] <- terra::classify(x = klam.pred.lcms[[i]],
+                                          rcl = mat,
+                                          include.lowest=T)
+}
+
+klam.loss.area <- freq(klam.pred.class) %>% 
+  as.data.frame() %>%
+  mutate(year = rep(2000:2016, each=4),
+         class = case_when(value==1 ~ "low",
+                           value==2 ~ "mod",
+                           value==3 ~ "cons",
+                           value==4 ~ "high"),
+         ha = count*0.09) %>% 
+  select(-layer, -value)
+
+klam.loss.area %>% 
+  mutate(class_fac = factor(class, levels = c("high","cons","mod","low"))) %>% 
+  filter(year %in% 2003:2016) %>% 
+  ggplot(.,
+         aes(x=year,
+             y=ha)) +
+  geom_area(aes(col = class_fac,
+                fill = class_fac),
+            lwd=1.5) +
+  scale_x_continuous(breaks=klam.loss.area$year)+
+  scale_color_manual(values = c("low" = "tan",
+                                "mod" = "gold2",
+                                "cons" = "orange",
+                                "high" = "firebrick2"),
+                     aesthetics = c("col", "fill"),
+                     name = "Severity class") +
+  labs(x = "Year",
+       y = "Damaged area (ha)") +
+  theme(axis.text.x = element_text(angle = 45,hjust=1)) +
+  lims(y=c(0,30000)) +
+  theme(legend.position="none")
+
+
+klam.loss.area %>% 
+  filter(year %in% 2003:2016) %>% 
+  mutate(class_fac = factor(class, levels = c("high","cons","mod","low"))) %>% 
+  ggplot(.,
+         aes(x=year,
+             y=ha)) +
+  geom_area(aes(col = class_fac,
+                fill = class_fac),
+            lwd=1.5) +
+  geom_line(data = klam.ads.area,
+            aes(x = SURVEY_YEA,
+                y = AREA_ha_mpb,
+                lty = "ADS"),
+            lwd=2,
+            alpha = 0.6) +
+  geom_line(data = klam.area,
+            aes(x = MEASYEAR,
+                y = AREA_TOTAL_ha,
+                lty = "FIA"),
+            lwd = 2,
+            alpha = 0.5)+
+  scale_x_continuous(breaks=klam.loss.area$year)+
+  scale_color_manual(values = c("low" = "tan",
+                                "mod" = "gold2",
+                                "cons" = "orange",
+                                "high" = "firebrick2"),
+                     aesthetics = c("col", "fill"),
+                     name = "Severity class") +
+  labs(x = "Year",
+       y = "Damaged area (ha)")+
+  theme(axis.text.x = element_text(angle = 45,hjust=1))+
+  scale_linetype_manual(values = c("ADS" = 1,
+                                   "FIA" = 2),
+                        name = "Data")
+
+
+```
+
+### FFB
+
+```{r}
+## basal area loss timeseries
+
+ffb.loss <- data.frame(year = as.numeric(names(psme.pred.lcms)),
+                       ba_loss = NA)
+
+for(i in 1:nlyr(psme.pred.lcms)){
+  loss <- mean(psme.pred.lcms[[i]][], na.rm=T)*(sum(!is.na(psme.lcms[[i]][]))*0.09)
+  ffb.loss$ba_loss[i] <- loss
+}
+
+ffb.loss %>% 
+  filter(year %in% 2015:2023) %>% 
+  ggplot(.,
+         aes(x = year,
+             y = -ba_loss)) +
+  geom_line(lwd = 1.5) +
+  scale_x_continuous(breaks = ffb.loss$year)
+
+## area in severity bins timeseries
+
+breaks <- psme.pred.lcms %>% 
+  terra::values() %>% 
+  quantile(.,
+           probs = c(0,0.25,0.5,0.75,1), na.rm=T)
+
+ffb.pred.class <- psme.pred.lcms
+for(i in 1:nlyr(psme.pred.lcms)){
+  mat <- matrix(c(breaks[1], breaks[2], breaks[3], breaks[4],
+                  breaks[2], breaks[3], breaks[4], breaks[5],
+                  4,3,2,1),
+                ncol=3)
+  ffb.pred.class[[i]] <- terra::classify(x = psme.pred.lcms[[i]],
+                                         rcl = mat,
+                                         include.lowest=T)
+}
+
+ffb.loss.area <- freq(ffb.pred.class) %>% 
+  as.data.frame() %>%
+  mutate(year = rep(2015:2023, each=4),
+         class = case_when(value==1 ~ "low",
+                           value==2 ~ "mod",
+                           value==3 ~ "cons",
+                           value==4 ~ "high"),
+         ha = count*0.09) %>% 
+  select(-layer, -value)
+
+ffb.loss.area %>% 
+  mutate(class_fac = factor(class, levels = c("high","cons","mod","low"))) %>% 
+  ggplot(.,
+         aes(x=year,
+             y=ha)) +
+  geom_area(aes(col = class_fac,
+                fill = class_fac),
+            lwd=1.5) +
+  scale_x_continuous(breaks=ffb.loss.area$year)+
+  scale_color_manual(values = c("low" = "tan",
+                                "mod" = "gold2",
+                                "cons" = "orange",
+                                "high" = "firebrick2"),
+                     aesthetics = c("col", "fill"),
+                     name = "Severity class") +
+  labs(x = "Year",
+       y = "Damaged area (ha)") +
+  theme(axis.text.x = element_text(angle = 45,hjust=1)) +
+  lims(y=c(0,30000)) +
+  theme(legend.position="none")
+
+ffb.loss.area %>% 
+  filter(year %in% 2015:2023) %>% 
+  mutate(class_fac = factor(class, levels = c("high","cons","mod","low"))) %>% 
+  ggplot(.,
+         aes(x=year,
+             y=ha)) +
+  geom_area(aes(col = class_fac,
+                fill = class_fac),
+            lwd=1.5) +
+  geom_line(data = ffb.ads.area,
+            aes(x = SURVEY_YEA,
+                y = AREA_m_ffb/1e4,
+                lty = "ADS"),
+            lwd=2,
+            alpha = 0.6) +
+  geom_line(data = ffb.area,
+            aes(x = MEASYEAR,
+                y = AREA_TOTAL_ha,
+                lty = "FIA"),
+            lwd = 2,
+            alpha = 0.5)+
+  scale_x_continuous(breaks=ffb.loss.area$year)+
+  scale_color_manual(values = c("low" = "tan",
+                                "mod" = "gold2",
+                                "cons" = "orange",
+                                "high" = "firebrick2"),
+                     aesthetics = c("col", "fill"),
+                     name = "Severity class") +
+  labs(x = "Year",
+       y = "Damaged area (ha)")+
+  theme(axis.text.x = element_text(angle = 45,hjust=1))+
+  scale_linetype_manual(values = c("ADS" = 1,
+                                   "FIA" = 2),
+                        name = "Data")
+
+```
+
+### FE
+
+```{r}
+## basal area loss timeseries
+
+fe.loss <- data.frame(year = as.numeric(names(ocho.pred.lcms)),
+                      ba_loss = NA)
+
+for(i in 1:nlyr(ocho.pred.lcms)){
+  loss <- mean(ocho.pred.lcms[[i]][], na.rm=T)*(sum(!is.na(ocho.lcms[[i]][]))*0.09)
+  fe.loss$ba_loss[i] <- loss
+}
+
+fe.loss %>% 
+  filter(year %in% 2016:2023) %>% 
+  ggplot(.,
+         aes(x = year,
+             y = -ba_loss)) +
+  geom_line(lwd = 1.5) +
+  scale_x_continuous(breaks = fe.loss$year)
+
+## area in severity bins timeseries
+
+breaks <- ocho.pred.lcms %>% 
+  terra::values(.) %>% 
+  as.vector() %>% 
+  na.omit() %>% 
+  quantile(.,
+           probs = c(0,0.25,0.5,0.75,1))
+
+fe.pred.class <- ocho.pred.lcms
+for(i in 1:nlyr(ocho.pred.lcms)){
+  mat <- matrix(c(breaks[1], breaks[2], breaks[3], breaks[4],
+                  breaks[2], breaks[3], breaks[4],breaks[5],
+                  4,3,2,1),
+                ncol=3)
+  fe.pred.class[[i]] <- terra::classify(x = ocho.pred.lcms[[i]],
+                                        rcl = mat,
+                                        include.lowest=T)
+}
+
+fe.loss.area <- freq(fe.pred.class) %>% 
+  as.data.frame() %>%view()
+mutate(year = rep(2016:2023, each=4),
+       class = case_when(value==1 ~ "low",
+                         value==2 ~ "mod",
+                         value==3 ~ "cons",
+                         value==4 ~ "high"),
+       ha = count*0.09) %>%
+  select(-layer, -value)
+
+fe.loss.area %>% 
+  #filter(year>2017) %>% 
+  mutate(class_fac = factor(class, levels = c("high","cons","mod","low"))) %>% 
+  ggplot(.,
+         aes(x=year,
+             y=ha)) +
+  geom_area(aes(col = class_fac,
+                fill = class_fac),
+            lwd=1.5) +
+  scale_x_continuous(breaks=fe.loss.area$year)+
+  scale_color_manual(values = c("low" = "tan",
+                                "mod" = "gold2",
+                                "cons" = "orange",
+                                "high" = "firebrick2"),
+                     aesthetics = c("col", "fill"),
+                     name = "Severity class") +
+  labs(x = "Year",
+       y = "Damaged area (ha)") +
+  theme(axis.text.x = element_text(angle = 45,hjust=1))+
+  #lims(y=c(0,30000)) +
+  theme(legend.position="none")
+
+
+
+fe.loss.area %>% 
+  filter(year %in% 2016:2023) %>% 
+  mutate(class_fac = factor(class, levels = c("high","cons","mod","low"))) %>% 
+  ggplot(.,
+         aes(x=year,
+             y=ha)) +
+  geom_area(aes(col = class_fac,
+                fill = class_fac),
+            lwd=1.5) +
+  geom_line(data = fe.ads.area,
+            aes(x = SURVEY_YEA,
+                y = AREA_m_fe/1e4,
+                lty = "ADS"),
+            lwd=2,
+            alpha = 0.6) +
+  geom_line(data = fe.area,
+            aes(x = MEASYEAR,
+                y = AREA_TOTAL_ha,
+                lty = "FIA"),
+            lwd = 2,
+            alpha = 0.5)+
+  scale_x_continuous(breaks=fe.loss.area$year)+
+  scale_color_manual(values = c("low" = "tan",
+                                "mod" = "gold2",
+                                "cons" = "orange",
+                                "high" = "firebrick2"),
+                     aesthetics = c("col", "fill"),
+                     name = "Severity class") +
+  labs(x = "Year",
+       y = "Damaged area (ha)")+
+  theme(axis.text.x = element_text(angle = 45,hjust=1))+
+  scale_linetype_manual(values = c("ADS" = 1,
+                                   "FIA" = 2),
+                        name = "Data")
+```
+
+
+## Observational data timeseries
+
+#### MPB
+
+##### Malheur
+```{r}
+
+malh.ads <- sf::read_sf("data/ADS_data/shapefiles/malh_all.shp") %>% 
+  sf::st_transform(crs = base.proj) %>% 
+  mutate(AREA_m = as.numeric(sf::st_area(., by_element = T)),
+         SURVEY_YEA = ifelse(SURVEY_YEA==0,SURVEY_Y_1,SURVEY_YEA))
+
+malh.ads %>% 
+  sf::st_drop_geometry() %>% 
+  filter(SURVEY_YEA %in% 2012:2019) %>% 
+  mutate(mpb = ifelse(DCA_CODE==11006,1,0)) %>% 
+  group_by(SURVEY_YEA) %>% 
+  summarise(AREA_m_all = sum(AREA_m),
+            AREA_m_mpb = sum(AREA_m*mpb)) %>% 
+  ggplot(.,
+         aes(x = SURVEY_YEA,
+             y = AREA_m_all/1e4)) +
+  geom_line(lwd=2,
+            aes(lty = "all agents")) +
+  geom_line(aes(y = AREA_m_mpb/1e4,
+                lty = "MPB"),
+            lwd = 2) +
+  scale_linetype_manual(name = "",values = c("all agents" = 1,
+                                             "MPB" = 2)) +
+  labs(x = "Survey year",
+       y = "Damaged area (ha)")
+
+
+# making indicator field for insect damage/mort in FFB case study
+malh.plts <- fia$TREE %>% 
+  filter(PLT_CN %in% malh.fia$PLT_CN,
+         SPCD %in% c(101,108,119,122),
+         agent_key == "insect" |
+           insect.damage == 1) %>% 
+  # DAMAGE_AGENT_CD1 %in% 10000:25000|
+  # DAMAGE_AGENT_CD2 %in% 10000:25000|
+  # DAMAGE_AGENT_CD3 %in% 10000:25000) %>% 
+  pull(PLT_CN) %>% 
+  unique()
+
+fia$PLOT <- fia$PLOT %>%
+  mutate(mpb = ifelse(PLT_CN %in% malh.plts, 1, 0))
+psme.fia <- malh.fia %>%
+  mutate(mpb = ifelse(PLT_CN %in% malh.plts, 1, 0))
+fia$TREE <- fia$TREE %>% 
+  mutate(mpb = ifelse(PLT_CN%in%malh.plts,1,0))
+
+# area estimation
+
+malh.area <- rFIA::area(db = fia,
+                        grpBy = c(MEASYEAR,mpb),
+                        polys = malh.fp,
+                        byPlot = F,
+                        # treeDomain = ffb == 1,
+                        # areaDomain = ffb==1,
+                        variance = F) %>% 
+  mutate(AREA_TOTAL_ha = AREA_TOTAL*0.4047) %>% 
+  group_by(MEASYEAR) %>% 
+  filter(YEAR == max(YEAR)) %>% 
+  ungroup() %>% 
+  filter(MEASYEAR %in% 2012:2019,
+         mpb==1)
+
+malh.ads.area <- malh.ads %>% 
+  sf::st_drop_geometry() %>% 
+  filter(SURVEY_YEA %in% 2012:2019) %>% 
+  mutate(mpb = ifelse(DCA_CODE==11006,1,0)) %>% 
+  group_by(SURVEY_YEA) %>% 
+  summarise(AREA_m_all = sum(AREA_m),
+            AREA_m_mpb = sum(AREA_m*mpb))
+
+malh.ads.area %>%   
+  ggplot(.,
+         aes(x = SURVEY_YEA,
+             y = AREA_m_all/1e4)) +
+  geom_line(data = malh.loss.area %>% 
+              filter(year %in% 2012:2019) %>% 
+              group_by(year) %>% 
+              summarise(ha = sum(ha)),
+            aes(x = year,
+                y = ha,
+                col = "LCMS"),
+            lwd = 2) +
+  geom_line(lwd=2,
+            aes(lty = "all agents",
+                col = "ADS")) +
+  geom_line(aes(y = AREA_m_mpb/1e4,
+                lty = "MPB",
+                col = "ADS"),
+            lwd = 2) +
+  geom_line(data = malh.area,
+            inherit.aes = F,
+            aes(x = as.integer(MEASYEAR),
+                y = AREA_TOTAL_ha,
+                col = "FIA"),
+            lwd = 2) +
+  geom_errorbar(data = malh.area,
+                inherit.aes=F,
+                aes(ymin = AREA_TOTAL_ha - ((AREA_TOTAL_SE/100)*AREA_TOTAL_ha),
+                    ymax = AREA_TOTAL_ha + ((AREA_TOTAL_SE/100)*AREA_TOTAL_ha),
+                    x = MEASYEAR,
+                    col = "FIA"),
+                width=0.25,
+                lwd=1)+
+  scale_linetype_manual(name = "",values = c("all agents" = 1,
+                                             "MPB" = 2)) +
+  scale_color_manual(name = "Data source",
+                     values = c("ADS" = "dodgerblue3",
+                                "FIA" = "firebrick3",
+                                "LCMS" = "gold2")) +
+  labs(x = "Survey year",
+       y = "Damaged area (ha)") +
+  scale_x_continuous(breaks = 2011:2019) +
+  theme(legend.position="none")
+
+
+```
+##### klam
+
+```{r}
+klam.ads <- sf::read_sf("data/ADS_data/shapefiles/klam_all.shp") %>% 
+  sf::st_transform(crs = base.proj) %>% 
+  mutate(AREA_m = as.numeric(sf::st_area(., by_element = T)),
+         SURVEY_YEA = ifelse(SURVEY_YEA==0,SURVEY_Y_1,SURVEY_YEA))
+
+klam.ads %>% 
+  sf::st_drop_geometry() %>% 
+  filter(SURVEY_YEA %in% 2003:2016) %>% 
+  mutate(mpb = ifelse(DCA_CODE==11006,1,0)) %>% 
+  group_by(SURVEY_YEA) %>% 
+  summarise(AREA_m_all = sum(AREA_m),
+            AREA_m_mpb = sum(AREA_m*mpb)) %>% 
+  ggplot(.,
+         aes(x = SURVEY_YEA,
+             y = AREA_m_all/1e4)) +
+  geom_line(lwd=2,
+            aes(lty = "all agents")) +
+  geom_line(aes(y = AREA_m_mpb/1e4,
+                lty = "MPB"),
+            lwd = 2) +
+  scale_linetype_manual(name = "",values = c("all agents" = 1,
+                                             "MPB" = 2)) +
+  labs(x = "Survey year",
+       y = "Damaged area (ha)")
+
+
+# making indicator field for insect damage/mort in FFB case study
+klam.plts <- fia$TREE %>% 
+  filter(PLT_CN %in% klam.fia$PLT_CN,
+         SPCD %in% c(101,108,119,122),
+         agent_key == "insect" |
+           insect.damage == 1) %>% 
+  # DAMAGE_AGENT_CD1 %in% 10000:25000|
+  # DAMAGE_AGENT_CD2 %in% 10000:25000|
+  # DAMAGE_AGENT_CD3 %in% 10000:25000) %>% 
+  pull(PLT_CN) %>% 
+  unique()
+
+fia$PLOT <- fia$PLOT %>%
+  mutate(mpb = ifelse(PLT_CN %in% klam.plts, 1, 0))
+psme.fia <- klam.fia %>%
+  mutate(mpb = ifelse(PLT_CN %in% klam.plts, 1, 0))
+fia$TREE <- fia$TREE %>% 
+  mutate(mpb = ifelse(PLT_CN%in%klam.plts,1,0))
+
+# area estimation
+
+klam.area <- rFIA::area(db = fia,
+                        grpBy = c(MEASYEAR,mpb),
+                        polys = klam.fp,
+                        byPlot = F,
+                        # treeDomain = ffb == 1,
+                        # areaDomain = ffb==1,
+                        variance = F) %>% 
+  mutate(AREA_TOTAL_ha = AREA_TOTAL*0.4047) %>% 
+  group_by(MEASYEAR) %>% 
+  filter(YEAR == max(YEAR)) %>% 
+  ungroup() %>% 
+  filter(#MEASYEAR %in% 2003:2016,
+    mpb==1)
+
+klam.ads %>% 
+  sf::st_drop_geometry() %>% 
+  filter(SURVEY_YEA %in% 2003:2016) %>% 
+  mutate(mpb = ifelse(DCA_CODE==11006,1,0)) %>% 
+  group_by(SURVEY_YEA) %>% 
+  summarise(AREA_m_all = sum(AREA_m),
+            AREA_m_mpb = sum(AREA_m*mpb)) %>% 
+  ggplot(.,
+         aes(x = SURVEY_YEA,
+             y = AREA_m_all/1e4)) +
+  geom_line(data = klam.loss.area %>%
+              filter(year>2002) %>% 
+              group_by(year) %>% 
+              summarise(ha = sum(ha)),
+            aes(x = year,
+                y = ha,
+                col = "LCMS"),
+            lwd = 2) +
+  geom_line(lwd=2,
+            aes(lty = "all agents",
+                col = "ADS")) +
+  geom_line(aes(y = AREA_m_mpb/1e4,
+                lty = "MPB",
+                col = "ADS"),
+            lwd = 2) +
+  geom_line(data = klam.area,
+            inherit.aes = F,
+            aes(x = as.integer(MEASYEAR),
+                y = AREA_TOTAL_ha,
+                col = "FIA"),
+            lwd = 2) +
+  geom_errorbar(data = klam.area,
+                inherit.aes=F,
+                aes(ymin = AREA_TOTAL_ha - ((AREA_TOTAL_SE/100)*AREA_TOTAL_ha),
+                    ymax = AREA_TOTAL_ha + ((AREA_TOTAL_SE/100)*AREA_TOTAL_ha),
+                    x = MEASYEAR,
+                    col = "FIA"),
+                width=0.25,
+                lwd=1)+
+  scale_linetype_manual(name = "",values = c("all agents" = 1,
+                                             "MPB" = 2)) +
+  scale_color_manual(name = "Data source",
+                     values = c("ADS" = "dodgerblue3",
+                                "FIA" = "firebrick3",
+                                "LCMS" = "gold2")) +
+  labs(x = "Survey year",
+       y = "Damaged area (ha)") +
+  scale_x_continuous(breaks = 2003:2016)+
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle=45, hjust=1))
+
+```
+
+
+#### FFB
+
+```{r}
+
+ffb.ads <- sf::read_sf("data/ADS_data/shapefiles/ffb_all_2015_2023_2.shp") %>% 
+  sf::st_transform(crs = base.proj) %>% 
+  mutate(AREA_m = as.numeric(sf::st_area(., by_element = T)),
+         SURVEY_YEA = ifelse(SURVEY_YEA==0,SURVEY_Y_1,SURVEY_YEA))
+
+ffb.ads %>% 
+  sf::st_drop_geometry() %>% 
+  mutate(ffb = ifelse(DCA_CODE %in% c(15008,15041),1,0)) %>% 
+  group_by(SURVEY_YEA) %>% 
+  summarise(AREA_m_all = sum(AREA_m),
+            AREA_m_ffb = sum(AREA_m*ffb)) %>% 
+  ggplot(.,
+         aes(x = SURVEY_YEA,
+             y = AREA_m_all/1e4)) +
+  geom_line(lwd=2,
+            aes(lty = "all agents")) +
+  geom_line(aes(y = AREA_m_ffb/1e4,
+                lty = "FFB"),
+            lwd = 2) +
+  scale_linetype_manual(name = "",values = c("all agents" = 1,
+                                             "FFB" = 2)) +
+  labs(x = "Survey year",
+       y = "Damaged area (ha)")
+
+# making indicator field for insect damage/mort in FFB case study
+ffb.plts <- fia$TREE %>% 
+  filter(PLT_CN %in% psme.fia$PLT_CN,
+         SPCD == 202,
+         agent_key == "insect" |
+           DAMAGE_AGENT_CD1 %in% 10000:25000|
+           DAMAGE_AGENT_CD2 %in% 10000:25000|
+           DAMAGE_AGENT_CD3 %in% 10000:25000) %>% 
+  pull(PLT_CN) %>% 
+  unique()
+
+fia$PLOT <- fia$PLOT %>%
+  mutate(ffb = ifelse(PLT_CN %in% ffb.plts, 1, 0))
+
+fia$TREE <- fia$TREE %>% 
+  mutate(ffb = ifelse(PLT_CN%in%ffb.plts,1,0))
+
+# area estimation
+
+ffb.area <- rFIA::area(db = fia,
+                       grpBy = c(MEASYEAR,ffb),
+                       polys = psme.fp,
+                       byPlot = F,
+                       # treeDomain = ffb == 1,
+                       # areaDomain = ffb==1,
+                       variance = F) %>%
+  mutate(AREA_TOTAL_ha = AREA_TOTAL*0.4047) %>% 
+  filter(YEAR == 2022, ffb==1,
+         MEASYEAR %in% 2015:2022)
+
+### Figure attempt
+
+ffb.ads.area <- ffb.ads %>% 
+  sf::st_drop_geometry() %>% 
+  mutate(ffb = ifelse(DCA_CODE %in% c(15008,15041),1,0)) %>% 
+  group_by(SURVEY_YEA) %>% 
+  summarise(AREA_m_all = sum(AREA_m),
+            AREA_m_ffb = sum(AREA_m*ffb))
+
+ffb.ads.area %>% 
+  ggplot(.,
+         aes(x = SURVEY_YEA,
+             y = AREA_m_all/1e4)) +
+  geom_line(data = ffb.loss.area %>% 
+              group_by(year) %>% 
+              summarise(ha = sum(ha)),
+            aes(x = year,
+                y = ha,
+                col = "LCMS"),
+            lwd = 2) +
+  geom_line(lwd=2,
+            aes(lty = "all agents",
+                col = "ADS")) +
+  geom_line(aes(y = AREA_m_ffb/1e4,
+                lty = "FFB",
+                col = "ADS"),
+            lwd = 2) +
+  geom_line(data = ffb.area,
+            inherit.aes = F,
+            aes(x = as.integer(MEASYEAR),
+                y = AREA_TOTAL_ha,
+                col = "FIA"),
+            lwd = 2) +
+  geom_errorbar(data = ffb.area,
+                inherit.aes=F,
+                aes(ymin = AREA_TOTAL_ha - ((AREA_TOTAL_SE/100)*AREA_TOTAL_ha),
+                    ymax = AREA_TOTAL_ha + ((AREA_TOTAL_SE/100)*AREA_TOTAL_ha),
+                    x = MEASYEAR,
+                    col = "FIA"),
+                width=0.25,
+                lwd=1)+
+  scale_linetype_manual(name = "",values = c("all agents" = 1,
+                                             "FFB" = 2)) +
+  scale_color_manual(name = "Data source",
+                     values = c("ADS" = "dodgerblue3",
+                                "FIA" = "firebrick3",
+                                "LCMS" = "gold2")) +
+  labs(x = "Survey year",
+       y = "Damaged area (ha)") +
+  scale_x_continuous(breaks = 2015:2023) +
+  theme(legend.position="none")
+
+```
+
+
+#### FE
+
+```{r}
+
+
+fe.ads <- sf::read_sf("data/ADS_data/shapefiles/fe_all2.shp") %>% 
+  sf::st_transform(crs = base.proj) %>% 
+  mutate(AREA_m = as.numeric(sf::st_area(., by_element = T)))
+
+fe.ads %>% 
+  sf::st_drop_geometry() %>% 
+  filter(SURVEY_YEA>2015) %>% 
+  mutate(fe = ifelse(DCA_CODE == 11050,1,0)) %>% 
+  group_by(SURVEY_YEA) %>% 
+  summarise(AREA_m_all = sum(AREA_m),
+            AREA_m_fe = sum(AREA_m*fe)) %>% 
+  ggplot(.,
+         aes(x = SURVEY_YEA,
+             y = AREA_m_all/1e4)) +
+  geom_line(lwd=2,
+            aes(lty = "all agents")) +
+  geom_line(aes(y = AREA_m_fe/1e4,
+                lty = "FE"),
+            lwd = 2) +
+  scale_linetype_manual(name = "",values = c("all agents" = 1,
+                                             "FE" = 2)) +
+  labs(x = "Survey year",
+       y = "Damaged area (ha)")
+
+# making indicator field for insect damage/mort in FFB case study
+ocho.fia <- sf::st_filter(sp.fia, ocho.fp) %>% 
+  filter(MEASYEAR>2015) # just making the TS longer
+
+
+fe.plts <- fia$TREE %>% 
+  filter(PLT_CN %in% ocho.fia$PLT_CN,
+         SPCD %in% c(15,17,19,22,202),
+         agent_key == "insect" |
+           DAMAGE_AGENT_CD1 %in% 10000:19000|
+           DAMAGE_AGENT_CD2 %in% 10000:19000|
+           DAMAGE_AGENT_CD3 %in% 10000:19000) %>% 
+  pull(PLT_CN) %>% 
+  unique()
+
+fia$PLOT <- fia$PLOT %>%
+  mutate(fe = ifelse(PLT_CN %in% fe.plts, 1, 0))
+ocho.fia <- ocho.fia %>%
+  mutate(fe = ifelse(PLT_CN %in% fe.plts, 1, 0))
+fia$TREE <- fia$TREE %>% 
+  mutate(fe = ifelse(PLT_CN%in%fe.plts,1,0))
+
+# area estimation
+
+fe.area <- rFIA::area(db = fia,
+                      grpBy = c(MEASYEAR,fe),
+                      polys = ocho.fp,
+                      byPlot = F,
+                      # treeDomain = ffb == 1,
+                      # areaDomain = ffb==1,
+                      variance = F) %>% 
+  mutate(AREA_TOTAL_ha = AREA_TOTAL*0.4047) %>% 
+  filter(YEAR == 2022, fe==1,
+         MEASYEAR>2015)
+
+### Figure attempt
+
+fe.ads.area <- fe.ads %>% 
+  sf::st_drop_geometry() %>% 
+  filter(SURVEY_YEA>2015) %>% 
+  mutate(fe = ifelse(DCA_CODE == 11050,1,0)) %>% 
+  group_by(SURVEY_YEA) %>% 
+  summarise(AREA_m_all = sum(AREA_m),
+            AREA_m_fe = sum(AREA_m*fe))
+
+fe.ads.area %>% 
+  ggplot(.,
+         aes(x = SURVEY_YEA,
+             y = AREA_m_all/1e4)) +
+  geom_line(data = fe.loss.area %>% 
+              group_by(year) %>% 
+              summarise(ha = sum(ha)),
+            aes(x = year,
+                y = ha,
+                col = "LCMS"),
+            lwd = 2) +
+  geom_line(lwd=2,
+            aes(lty = "all agents",
+                col = "ADS")) +
+  geom_line(aes(y = AREA_m_fe/1e4,
+                lty = "FE",
+                col = "ADS"),
+            lwd = 2) +
+  
+  geom_line(data = fe.area,
+            inherit.aes = F,
+            aes(x = as.integer(MEASYEAR),
+                y = AREA_TOTAL_ha,
+                col = "FIA"),
+            lwd = 2) +
+  geom_errorbar(data = fe.area,
+                inherit.aes=F,
+                aes(ymin = AREA_TOTAL_ha - ((AREA_TOTAL_SE/100)*AREA_TOTAL_ha),
+                    ymax = AREA_TOTAL_ha + ((AREA_TOTAL_SE/100)*AREA_TOTAL_ha),
+                    x = MEASYEAR,
+                    col = "FIA"),
+                width=0.25,
+                lwd=1)+
+  scale_linetype_manual(name = "",values = c("all agents" = 1,
+                                             "FE" = 2)) +
+  scale_color_manual(name = "Data source",
+                     values = c("ADS" = "dodgerblue3",
+                                "FIA" = "firebrick3",
+                                "LCMS" = "gold2")) +
+  labs(x = "Survey year",
+       y = "Damaged area (ha)") +
+  scale_x_continuous(breaks = 2015:2023) +
+  theme(legend.position="none")
+
+
+```
+
+
+## Case study maps
+
+#### FE
+
+```{r}
+
+ext <- sf::st_bbox(ocho.fp %>% sf::st_transform(crs=CRS(old.proj)))
+names(ext) <- c("left","bottom","right","top")
+
+register_stadiamaps("d0a45b35-73bc-47d3-a8c7-8a0be7f39dc6")
+ocho.map <- get_stadiamap(bbox = ext, mapytpe = "stamen_terrain")
+
+
+fe.fia <- fia$PLOT %>% 
+  filter(!is.na(LON_EXACT)) %>% 
+  sf::st_as_sf(coords = c("LON_FUZZ","LAT_FUZZ"),
+               crs = old.proj,
+               remove = FALSE) %>% 
+  sf::st_transform(crs = base.proj) %>% 
+  sf::st_filter(., ocho.fp)
+
+## ADS and FIA
+
+ggmap(ocho.map) +
+  geom_sf(data = ocho.fp %>%
+            sf::st_transform(crs=CRS(old.proj)),
+          inherit.aes = F,
+          fill=NA,
+          col = "black",
+          lwd=1.5) +
+  geom_sf(data = fe.ads %>% 
+            filter(DCA_CODE == 11050,
+                   SURVEY_YEA>2020) %>% 
+            sf::st_transform(crs=CRS(old.proj)),
+          inherit.aes = F,
+          fill = "dodgerblue2",
+          col = NA,
+          alpha = 0.5) +
+  geom_sf(data = fe.fia %>% 
+            filter(MEASYEAR > 2020),
+          inherit.aes=F,
+          pch = 19,
+          size = 3,
+          col = "firebrick3",
+          alpha = 0.7) +
+  labs(x = "Longitude", y = "Latitude") +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+
+## cumulative predictions
+ggmap(ocho.map) +
+  geom_sf(data = ocho.fp %>%
+            sf::st_transform(crs=CRS(old.proj)),
+          inherit.aes = F,
+          fill=NA,
+          col = "black",
+          lwd=1.5) +
+  geom_tile(data = ocho.pred.lcms %>%
+              terra::subset(., c("2021","2022","2023")) %>% 
+              terra::app(., fun=sum, na.rm=T) %>% 
+              #terra::mean(.,na.rm=T) %>% 
+              terra::project(CRS(old.proj)) %>%
+              as.data.frame(.,xy=T) %>%
+              rename(val = 3),
+            aes(x = x, y = y, fill = val)) +
+  scale_fill_gradient2(low = "firebrick3",mid="white",high = "dodgerblue2",
+                       midpoint=0,
+                       aesthetics = "fill",
+                       guide = "legend",
+                       limits = c(-35,10),
+                       n.breaks = 6,
+                       na.value="transparent",
+                       name="BAH\n(m2/ha)") +
+  labs(x = "Longitude", y = "Latitude") +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+## binned by severity class
+
+breaks <- ocho.pred.lcms %>% 
+  app(., sum, na.rm=T) %>% 
+  terra::values(.) %>% 
+  as.vector() %>% 
+  na.omit() %>% 
+  quantile(.,
+           probs = c(0,0.25,0.5,0.75,1))
+
+fe.pred.class.sum <- ocho.pred.lcms %>% 
+  app(., sum, na.rm=T) %>% 
+  terra::classify(x = .,
+                  rcl = matrix(c(breaks[1], breaks[2], breaks[3], breaks[4],
+                                 breaks[2], breaks[3], breaks[4],breaks[5],
+                                 4,3,2,1),
+                               ncol=3),
+                  include.lowest=T)
+
+ggmap(ocho.map) +
+  geom_sf(data = ocho.fp %>%
+            sf::st_transform(crs=CRS(old.proj)),
+          inherit.aes = F,
+          fill=NA,
+          col = "black",
+          lwd=1.5) +
+  geom_tile(data = fe.pred.class.sum %>% 
+              terra::project(CRS(old.proj)) %>%
+              as.data.frame(.,xy=T) %>%
+              rename(val = 3)  %>% 
+              mutate(val=round(val,digits = 0)),
+            aes(x = x, y = y, fill = factor(val))) +
+  scale_fill_manual(values=c("1" = "tan",
+                             "2" = "gold2",
+                             "3" = "orange",
+                             "4" = "firebrick2")) +
+  labs(x = "Longitude", y = "Latitude") +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+## NBR
+
+fe.nbr <- ocho.nbr %>% 
+  subset(paste0(2016:2023))
+
+#calculating NBR differences over decade preceding each outbreak year
+for(year in 2016:2023){
+  fe.nbr[[paste0(year)]] <- ocho.nbr[[paste0(year)]]-ocho.nbr[[paste0(year-1)]]
+}
+
+#fe.nbr <- ocho.nbr$`2023` - ocho.nbr$`2013`
+
+ggmap(ocho.map) +
+  geom_sf(data = ocho.fp %>%
+            sf::st_transform(crs=CRS(old.proj)),
+          inherit.aes = F,
+          fill=NA,
+          col = "black",
+          lwd=1.5) +
+  geom_tile(data = fe.nbr %>%
+              terra::mask(., ocho.fp) %>% 
+              terra::project(CRS(old.proj)) %>%
+              terra::app(., fun=sum, na.rm=T) %>% 
+              as.data.frame(.,xy=T) %>%
+              rename(val = 3) %>% 
+              mutate(val = val/1000),
+            aes(x = x, y = y, fill = val))+
+  scale_fill_gradient2(low = "firebrick3",mid="gray95",high = "dodgerblue2",
+                       midpoint=0,
+                       aesthetics = "fill",
+                       guide = "legend",
+                       limits = c(-1,0.5),
+                       #breaks = NULL,
+                       n.breaks = 9,
+                       na.value="transparent",
+                       name="dNBR\n(2023-2013)") +
+  labs(x = "Longitude", y = "Latitude") +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+
+```
+
+
+####FFB
+```{r}
+
+ext <- sf::st_bbox(psme.fp %>% sf::st_transform(crs=CRS(old.proj)))
+names(ext) <- c("left","bottom","right","top")
+
+register_stadiamaps("d0a45b35-73bc-47d3-a8c7-8a0be7f39dc6")
+psme.map <- get_stadiamap(bbox = ext, mapytpe = "stamen_terrain")
+
+
+ffb.fia <- fia$PLOT %>% 
+  filter(!is.na(LON_EXACT)) %>% 
+  sf::st_as_sf(coords = c("LON_FUZZ","LAT_FUZZ"),
+               crs = old.proj,
+               remove = FALSE) %>% 
+  sf::st_transform(crs = base.proj) %>% 
+  sf::st_filter(., psme.fp)
+
+## ADS and FIA
+
+ggmap(psme.map) +
+  geom_sf(data = psme.fp %>%
+            sf::st_transform(crs=CRS(old.proj)),
+          inherit.aes = F,
+          fill=NA,
+          col = "black",
+          lwd=1.5) +
+  geom_sf(data = ffb.ads %>% 
+            filter(DCA_CODE %in% c(15008,15041),
+                   SURVEY_YEA>2014) %>% 
+            sf::st_transform(crs=CRS(old.proj)),
+          inherit.aes = F,
+          fill = "dodgerblue2",
+          col = NA,
+          alpha = 0.5) +
+  geom_sf(data = ffb.fia %>% 
+            filter(MEASYEAR > 2014),
+          inherit.aes=F,
+          pch = 19,
+          size = 3,
+          col = "firebrick3",
+          alpha = 0.7) +
+  labs(x = "Longitude", y = "Latitude") +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+
+## cumulative predictions
+ggmap(psme.map) +
+  geom_sf(data = psme.fp %>%
+            sf::st_transform(crs=CRS(old.proj)),
+          inherit.aes = F,
+          fill=NA,
+          col = "black",
+          lwd=1.5) +
+  geom_tile(data = psme.pred.lcms %>%
+              terra::subset(., paste0(2015:2023)) %>% 
+              terra::app(., fun=sum, na.rm=T) %>% 
+              #terra::mean(.,na.rm=T) %>% 
+              terra::project(CRS(old.proj)) %>%
+              as.data.frame(.,xy=T) %>%
+              rename(val = 3),
+            aes(x = x, y = y, fill = val)) +
+  scale_fill_gradient2(low = "firebrick3",mid="white",high = "dodgerblue2",
+                       midpoint=0,
+                       aesthetics = "fill",
+                       guide = "legend",
+                       limits = c(-50,20),
+                       n.breaks = 9,
+                       na.value="transparent",
+                       name="BAH\n(m2/ha)") +
+  labs(x = "Longitude", y = "Latitude") +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+## binned by severity class
+
+breaks <- psme.pred.lcms %>%
+  terra::subset(., paste0(2015:2023)) %>% 
+  app(., sum, na.rm=T) %>% 
+  terra::values(.) %>% 
+  as.vector() %>% 
+  na.omit() %>% 
+  quantile(.,
+           probs = c(0,0.25,0.5,0.75,1))
+
+ffb.pred.class.sum <- psme.pred.lcms %>% 
+  app(., sum, na.rm=T) %>% 
+  terra::classify(x = .,
+                  rcl = matrix(c(breaks[1], breaks[2], breaks[3], breaks[4],
+                                 breaks[2], breaks[3], breaks[4],breaks[5],
+                                 4,3,2,1),
+                               ncol=3),
+                  include.lowest=T)
+
+ggmap(psme.map) +
+  geom_sf(data = psme.fp %>%
+            sf::st_transform(crs=CRS(old.proj)),
+          inherit.aes = F,
+          fill=NA,
+          col = "black",
+          lwd=1.5) +
+  geom_tile(data = ffb.pred.class.sum %>%
+              terra::project(CRS(old.proj)) %>%
+              as.data.frame(.,xy=T) %>%
+              rename(val = 3)  %>% 
+              mutate(val=round(val,digits = 0)),
+            aes(x = x, y = y, fill = factor(val))) +
+  scale_fill_manual(values=c("1" = "tan",
+                             "2" = "gold2",
+                             "3" = "orange",
+                             "4" = "firebrick2")) +
+  labs(x = "Longitude", y = "Latitude") +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+## NBR
+#fe.nbr <- psme.nbr$`2023` - psme.nbr$`2013`
+
+ffb.nbr <- psme.nbr %>% 
+  subset(paste0(2016:2023))
+
+#calculating NBR differences over decade preceding each outbreak year
+for(year in 2016:2023){
+  ffb.nbr[[paste0(year)]] <- psme.nbr[[paste0(year)]]-psme.nbr[[paste0(year-1)]]
+}
+
+
+ggmap(psme.map) +
+  geom_sf(data = psme.fp %>%
+            sf::st_transform(crs=CRS(old.proj)),
+          inherit.aes = F,
+          fill=NA,
+          col = "black",
+          lwd=1.5) +
+  geom_tile(data = ffb.nbr %>%
+              terra::mask(., psme.fp) %>% 
+              terra::project(CRS(old.proj)) %>%
+              terra::app(., fun=sum, na.rm=T) %>% 
+              as.data.frame(.,xy=T) %>%
+              rename(val = 3) %>% 
+              mutate(val = val/1000),
+            aes(x = x, y = y, fill = val))+
+  scale_fill_gradient2(low = "firebrick3",mid="gray95",high = "dodgerblue2",
+                       midpoint=0,
+                       aesthetics = "fill",
+                       guide = "legend",
+                       limits = c(-1,0.5),
+                       #breaks = NULL,
+                       n.breaks = 9,
+                       na.value="transparent",
+                       name="dNBR\n(2013-2023)") +
+  labs(x = "Longitude", y = "Latitude") +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+
+```
+
+### Malh
+```{r}
+
+ext <- sf::st_bbox(malh.fp %>% sf::st_transform(crs=CRS(old.proj)))
+names(ext) <- c("left","bottom","right","top")
+
+register_stadiamaps("d0a45b35-73bc-47d3-a8c7-8a0be7f39dc6")
+malh.map <- get_stadiamap(bbox = ext, mapytpe = "stamen_terrain")
+
+
+malh.fia <- fia$PLOT %>% 
+  filter(!is.na(LON_EXACT)) %>% 
+  sf::st_as_sf(coords = c("LON_FUZZ","LAT_FUZZ"),
+               crs = old.proj,
+               remove = FALSE) %>% 
+  sf::st_transform(crs = base.proj) %>% 
+  sf::st_filter(., malh.fp)
+
+## ADS and FIA
+
+ggmap(malh.map) +
+  geom_sf(data = malh.fp %>%
+            sf::st_transform(crs=CRS(old.proj)),
+          inherit.aes = F,
+          fill=NA,
+          col = "black",
+          lwd=1.5) +
+  geom_sf(data = malh.ads %>% 
+            filter(DCA_CODE %in% c(11006),
+                   SURVEY_YEA %in% 2012:2019) %>% 
+            sf::st_transform(crs=CRS(old.proj)),
+          inherit.aes = F,
+          fill = "dodgerblue2",
+          col = NA,
+          alpha = 0.5) +
+  geom_sf(data = malh.fia %>% 
+            filter(MEASYEAR %in% 2012:2019),
+          inherit.aes=F,
+          pch = 19,
+          size = 3,
+          col = "firebrick3",
+          alpha = 0.7) +
+  labs(x = "Longitude", y = "Latitude") +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+
+## cumulative predictions
+ggmap(malh.map) +
+  geom_sf(data = malh.fp %>%
+            sf::st_transform(crs=CRS(old.proj)),
+          inherit.aes = F,
+          fill=NA,
+          col = "black",
+          lwd=1.5) +
+  geom_tile(data = malh.pred.lcms %>%
+              terra::subset(., paste0(2012:2019)) %>% 
+              terra::app(., fun=sum, na.rm=T) %>% 
+              #terra::mean(.,na.rm=T) %>% 
+              terra::project(CRS(old.proj)) %>%
+              as.data.frame(.,xy=T) %>%
+              rename(val = 3),
+            aes(x = x, y = y, fill = val)) +
+  scale_fill_gradient2(low = "firebrick3",mid="white",high = "dodgerblue2",
+                       midpoint=0,
+                       aesthetics = "fill",
+                       guide = "legend",
+                       limits = c(-90,10),
+                       oob = scales::squish,
+                       n.breaks = 9,
+                       na.value="transparent",
+                       name="BAH\n(m2/ha)") +
+  labs(x = "Longitude", y = "Latitude") +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+## binned by severity class
+
+breaks <- malh.pred.lcms %>%
+  terra::subset(., paste0(2012:2019)) %>% 
+  app(., sum, na.rm=T) %>% 
+  terra::values(.) %>% 
+  as.vector() %>% 
+  na.omit() %>% 
+  quantile(.,
+           probs = c(0,0.25,0.5,0.75,1))
+
+malh.pred.class.sum <- malh.pred.lcms %>% 
+  terra::subset(., paste0(2012:2019)) %>%
+  app(., sum, na.rm=T) %>% 
+  terra::classify(x = .,
+                  rcl = matrix(c(breaks[1], breaks[2], breaks[3], breaks[4],
+                                 breaks[2], breaks[3], breaks[4],breaks[5],
+                                 4,3,2,1),
+                               ncol=3),
+                  include.lowest=T)
+
+ggmap(malh.map) +
+  geom_sf(data = malh.fp %>%
+            sf::st_transform(crs=CRS(old.proj)),
+          inherit.aes = F,
+          fill=NA,
+          col = "black",
+          lwd=1.5) +
+  geom_tile(data = malh.pred.class.sum %>%
+              terra::project(CRS(old.proj)) %>%
+              as.data.frame(.,xy=T) %>%
+              rename(val = 3)  %>% 
+              mutate(val=round(val,digits = 0)),
+            aes(x = x, y = y, fill = factor(val))) +
+  scale_fill_manual(values=c("1" = "tan",
+                             "2" = "gold2",
+                             "3" = "orange",
+                             "4" = "firebrick2")) +
+  labs(x = "Longitude", y = "Latitude") +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+## NBR
+#malh.nbr <- malh.nbr$`2019` - malh.nbr$`2009`
+
+malh2.nbr <- malh.nbr %>% 
+  subset(paste0(2016:2023))
+
+#calculating NBR differences over decade preceding each outbreak year
+for(year in 2016:2023){
+  malh2.nbr[[paste0(year)]] <- malh.nbr[[paste0(year)]]-malh.nbr[[paste0(year-1)]]
+}
+
+ggmap(malh.map) +
+  geom_sf(data = malh.fp %>%
+            sf::st_transform(crs=CRS(old.proj)),
+          inherit.aes = F,
+          fill=NA,
+          col = "black",
+          lwd=1.5) +
+  geom_tile(data = malh2.nbr %>%
+              terra::mask(., malh.fp) %>% 
+              terra::project(CRS(old.proj)) %>%
+              terra::app(., fun=sum, na.rm=T) %>% 
+              as.data.frame(.,xy=T) %>%
+              rename(val = 3) %>% 
+              mutate(val = val/1000),
+            aes(x = x, y = y, fill = val))+
+  scale_fill_gradient2(low = "firebrick3",mid="gray95",high = "dodgerblue2",
+                       midpoint=0,
+                       aesthetics = "fill",
+                       guide = "legend",
+                       limits = c(-1,0.5),
+                       #breaks = NULL,
+                       oob = scales::squish,
+                       n.breaks = 9,
+                       na.value="transparent",
+                       name="dNBR\n(2009-2019)") +
+  labs(x = "Longitude", y = "Latitude") +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+## PROP HOST
+
+prop.ba.malh[is.na(prop.ba.malh[])] <- 0
+
+ggmap(malh.map) +
+  geom_sf(data = malh.fp %>%
+            sf::st_transform(crs=CRS(old.proj)),
+          inherit.aes = F,
+          fill=NA,
+          col = "black",
+          lwd=1.5) +
+  geom_tile(data = prop.ba.malh %>%
+              terra::mask(., malh.fp) %>% 
+              terra::project(CRS(old.proj)) %>%
+              as.data.frame(.,xy=T) %>%
+              rename(val = 3),
+            aes(x = x, y = y, fill = val))+
+  scale_fill_gradient(low = "white",high = "forestgreen",
+                       aesthetics = "fill",
+                       guide = "legend",
+                       oob = scales::squish,
+                       n.breaks = 6,
+                       #na.value="white",
+                       name="% host BA") +
+  labs(x = "Longitude", y = "Latitude") +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+
+```
+
+### Klam
+```{r}
+
+ext <- sf::st_bbox(klam.fp %>% sf::st_transform(crs=CRS(old.proj)))
+names(ext) <- c("left","bottom","right","top")
+
+register_stadiamaps("d0a45b35-73bc-47d3-a8c7-8a0be7f39dc6")
+klam.map <- get_stadiamap(bbox = ext, mapytpe = "stamen_terrain")
+
+
+klam.fia <- fia$PLOT %>% 
+  filter(!is.na(LON_EXACT)) %>% 
+  sf::st_as_sf(coords = c("LON_FUZZ","LAT_FUZZ"),
+               crs = old.proj,
+               remove = FALSE) %>% 
+  sf::st_transform(crs = base.proj) %>% 
+  sf::st_filter(., klam.fp)
+
+## ADS and FIA
+
+ggmap(klam.map) +
+  geom_sf(data = klam.fp %>%
+            sf::st_transform(crs=CRS(old.proj)),
+          inherit.aes = F,
+          fill=NA,
+          col = "black",
+          lwd=1.5) +
+  geom_sf(data = klam.ads %>% 
+            filter(DCA_CODE %in% c(11006),
+                   SURVEY_YEA %in% 2003:2016) %>% 
+            sf::st_transform(crs=CRS(old.proj)),
+          inherit.aes = F,
+          fill = "dodgerblue2",
+          col = NA,
+          alpha = 0.5) +
+  geom_sf(data = klam.fia %>% 
+            filter(MEASYEAR %in% 2003:2016),
+          inherit.aes=F,
+          pch = 19,
+          size = 3,
+          col = "firebrick3",
+          alpha = 0.7) +
+  labs(x = "Longitude", y = "Latitude") +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+
+## cumulative predictions
+ggmap(klam.map) +
+  geom_sf(data = klam.fp %>%
+            sf::st_transform(crs=CRS(old.proj)),
+          inherit.aes = F,
+          fill=NA,
+          col = "black",
+          lwd=1.5) +
+  geom_tile(data = klam.pred.lcms %>%
+              terra::subset(., paste0(2003:2016)) %>% 
+              terra::app(., fun=sum, na.rm=T) %>% 
+              terra::project(CRS(old.proj)) %>%
+              as.data.frame(.,xy=T) %>%
+              rename(val = 3),
+            aes(x = x, y = y, fill = val)) +
+  scale_fill_gradient2(low = "firebrick3",mid="white",high = "dodgerblue2",
+                       midpoint=0,
+                       aesthetics = "fill",
+                       guide = "legend",
+                       limits = c(-150,20),
+                       n.breaks = 9,
+                       na.value="transparent",
+                       name="BAH\n(m2/ha)") +
+  labs(x = "Longitude", y = "Latitude") +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+## binned by severity class
+
+breaks <- klam.pred.lcms %>%
+  terra::subset(., paste0(2003:2016)) %>% 
+  app(., sum, na.rm=T) %>% 
+  terra::values(.) %>% 
+  as.vector() %>% 
+  na.omit() %>% 
+  quantile(.,
+           probs = c(0,0.25,0.5,0.75,1))
+
+klam.pred.class.sum <- klam.pred.lcms %>% 
+  terra::subset(., paste0(2003:2016)) %>%
+  app(., sum, na.rm=T) %>% 
+  terra::classify(x = .,
+                  rcl = matrix(c(breaks[1], breaks[2], breaks[3], breaks[4],
+                                 breaks[2], breaks[3], breaks[4],breaks[5],
+                                 4,3,2,1),
+                               ncol=3),
+                  include.lowest=T)
+
+ggmap(klam.map) +
+  geom_sf(data = klam.fp %>%
+            sf::st_transform(crs=CRS(old.proj)),
+          inherit.aes = F,
+          fill=NA,
+          col = "black",
+          lwd=1.5) +
+  geom_tile(data = klam.pred.class.sum %>%
+              terra::project(CRS(old.proj)) %>%
+              as.data.frame(.,xy=T) %>%
+              rename(val = 3)  %>% 
+              mutate(val=round(val,digits = 0)),
+            aes(x = x, y = y, fill = factor(val))) +
+  scale_fill_manual(values=c("1" = "tan",
+                             "2" = "gold2",
+                             "3" = "orange",
+                             "4" = "firebrick2")) +
+  labs(x = "Longitude", y = "Latitude") +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+## NBR
+#klam.nbr <- klam.nbr$`2006` - klam.nbr$`2016`
+
+
+klam2.nbr <- klam.nbr %>% 
+  subset(paste0(2003:2016))
+
+#calculating NBR differences over decade preceding each outbreak year
+for(year in 2003:2016){
+  klam2.nbr[[paste0(year)]] <- klam.nbr[[paste0(year)]]-klam.nbr[[paste0(year-1)]]
+}
+
+ggmap(klam.map) +
+  geom_sf(data = klam.fp %>%
+            sf::st_transform(crs=CRS(old.proj)),
+          inherit.aes = F,
+          fill=NA,
+          col = "black",
+          lwd=1.5) +
+  geom_tile(data = klam2.nbr %>%
+              terra::mask(., klam.fp) %>% 
+              terra::project(CRS(old.proj)) %>%
+              terra::app(., fun = sum, na.rm=T) %>% 
+              as.data.frame(.,xy=T) %>%
+              rename(val = 3) %>% 
+              mutate(val = val/1000),
+            aes(x = x, y = y, fill = val))+
+  geom_sf(data = klam.fia %>% 
+            filter(MEASYEAR %in% 2003:2016),
+          inherit.aes=F,
+          pch = 19,
+          size = 3,
+          col = "black",
+          alpha = 0.7) +
+  scale_fill_gradient2(low = "firebrick3",mid="gray95",high = "dodgerblue2",
+                       midpoint=0,
+                       aesthetics = "fill",
+                       guide = "legend",
+                       limits = c(-1,0.5),
+                       #breaks = NULL,
+                       oob = scales::squish,
+                       n.breaks = 9,
+                       na.value="transparent",
+                       name="dNBR\n(2006-2016)") +
+  labs(x = "Longitude", y = "Latitude") +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+### PROP HOST
+
+prop.ba.klam[is.na(prop.ba.klam[])] <- 0
+
+ggmap(klam.map) +
+  geom_sf(data = klam.fp %>%
+            sf::st_transform(crs=CRS(old.proj)),
+          inherit.aes = F,
+          fill=NA,
+          col = "black",
+          lwd=1.5) +
+  geom_tile(data = prop.ba.klam %>%
+              terra::mask(., klam.fp) %>% 
+              terra::project(CRS(old.proj)) %>%
+              as.data.frame(.,xy=T) %>%
+              rename(val = 3),
+            aes(x = x, y = y, fill = val))+
+  scale_fill_gradient(low = "white",high = "forestgreen",
+                       aesthetics = "fill",
+                       guide = "legend",
+                       oob = scales::squish,
+                       n.breaks = 6,
+                       #na.value="white",
+                       name="% host BA") +
+  labs(x = "Longitude", y = "Latitude") +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+```
 
 
 
 
 
+## misc. code
+
+```{r}
+# malh
+
+years <- 2012:2019
+
+malh.ads.area <- malh.ads %>% 
+  sf::st_drop_geometry() %>% 
+  filter(SURVEY_YEA %in% years) %>% 
+  mutate(mpb = ifelse(DCA_CODE==11006,1,0)) %>% 
+  group_by(SURVEY_YEA) %>% 
+  summarise(AREA_ha_all = sum(AREA_m)/1e4,
+            AREA_ha_mpb = sum(AREA_m*mpb)/1e4)
+
+
+classes <- c("high","cons","mod","low")
+
+out <- data.frame(class = classes, cor.ads=NA, cor.fia = NA)
+
+for(i in 1:length(classes)){
+  j <- classes[i]
+  
+  sev.area <- malh.loss.area %>%
+    filter(year %in% years) %>% 
+    filter(class == j)
+  
+  out$cor.ads[i] <- cor(sev.area$ha, malh.ads.area$AREA_ha_mpb)
+  out$cor.fia[i] <- cor(sev.area$ha, malh.area$AREA_TOTAL_ha)
+}  
+
+# klam
+
+years <- 2003:2016
+
+klam.ads.area <- klam.ads %>% 
+  sf::st_drop_geometry() %>% 
+  filter(SURVEY_YEA %in% years) %>% 
+  mutate(mpb = ifelse(DCA_CODE==11006,1,0)) %>% 
+  group_by(SURVEY_YEA) %>% 
+  summarise(AREA_ha_all = sum(AREA_m)/1e4,
+            AREA_ha_mpb = sum(AREA_m*mpb)/1e4)
+
+klam.area <- klam.area %>% 
+  filter()
+
+
+classes <- c("high","cons","mod","low")
+
+out <- data.frame(class = classes, cor.ads=NA, cor.fia = NA)
+
+for(i in 1:length(classes)){
+  j <- classes[i]
+  
+  sev.area <- klam.loss.area %>%
+    filter(year %in% years) %>% 
+    filter(class == j)
+  
+  out$cor.ads[i] <- cor(sev.area$ha, klam.ads.area$AREA_ha_mpb)
+  #out$cor.fia[i] <- cor(sev.area$ha, klam.area$AREA_TOTAL_ha)
+}  
 
 
 
 
-
-
-
-
+```
 
 
 

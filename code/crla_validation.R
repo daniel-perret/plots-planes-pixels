@@ -206,7 +206,37 @@ cor(x=crla.pred$pred, y=crla.pred$CHNG_BAA, use="pairwise.complete.obs")
 
 
 
-
+mpb.extract <- klam.ext %>% 
+  mutate(case = "klam") %>% 
+  bind_rows(malh.ext %>% 
+              mutate(case = "malh")) %>% 
+  mutate(YEAR2 = MEASYEAR,
+         YEAR1 = as.integer(round(MEASYEAR-REMPER))) %>%
+  select(PLT_CN,YEAR1,YEAR2,REMPER, 
+         contains("X")) %>%
+  select(-LAT_EXACT, -LON_EXACT, -SUBP_EXAMINE_CD) %>% 
+  pivot_longer(cols = c(contains("X")),
+               names_to = "year",
+               values_to = "nbr") %>%
+  mutate(year = as.integer(substr(year, start=2, stop = 5))) %>% 
+  filter(!is.na(REMPER)) %>% sf::st_drop_geometry() %>% 
+  ungroup() %>% 
+  rowwise() %>% 
+  filter(year %in% YEAR1:YEAR2) %>% 
+  group_by(PLT_CN) %>%   
+  mutate(d_nbr = nbr - lag(nbr),
+         di_nbr = nbr - first(nbr)) %>%
+  ungroup() %>% 
+  mutate(nbr_t2 = ifelse(year == YEAR2,nbr,0),
+         nbr_t1 = ifelse(year == YEAR1,nbr,0),
+         d_nbr_ann = ifelse(year == YEAR2,d_nbr,0)) %>% 
+  group_by(PLT_CN,YEAR1,YEAR2,REMPER) %>% 
+  summarise(nbr_t2 = sum(nbr_t2),
+            nbr_t1 = sum(nbr_t1),
+            d_nbr_tot = sum(d_nbr, na.rm=T),
+            d_nbr_abs = sum(abs(d_nbr), na.rm=T),
+            di_nbr_tot = sum(di_nbr, na.rm=T)) %>% 
+  ungroup()
 
 
 

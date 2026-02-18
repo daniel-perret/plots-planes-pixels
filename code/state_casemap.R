@@ -50,12 +50,12 @@ ggplot() +
   geom_sf(data = mpb3,
           aes(fill = "MPB"),
           inherit.aes=F) +
-  # geom_sf(data = psme,
-  #         aes(fill = "FFB (PSME)"),
-  #         inherit.aes=F) + 
-  # geom_sf(data = ocho,
-  #         aes(fill = "FE (Abies sp.)"),
-  #         inherit.aes=F) +
+  geom_sf(data = psme,
+          aes(fill = "FFB (PSME)"),
+          inherit.aes=F) +
+  geom_sf(data = ocho,
+          aes(fill = "FE (Abies sp.)"),
+          inherit.aes=F) +
   scale_color_manual(name = "Case study",
                      values = c("MPB" = "gold2",
                                 "FFB (PSME)" = "dodgerblue3",

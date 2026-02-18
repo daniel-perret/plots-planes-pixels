@@ -24,7 +24,7 @@ library(terra)
 
 #AOIs as shapefiles
 #two AOIs, Malhuer and Klamath
-aoi <-  sf::st_read("data/ADS_data/shapefiles/ocho_fir2022.shp")
+aoi <-  sf::st_read("data/ADS_data/shapefiles/psme_fp.shp")
 
 #1985-2023 LCMS 
 #annual change and annual cause of change
@@ -57,6 +57,6 @@ cause.rat <- levels(crop.rast)[[1]]
 
 #and export
 writeRaster(crop.rast,
-            "C:/Users/DanielPerret/Box/PlotsPlanesPixels/data/LCMS/ocho_causeofchange_annual.tif",
+            "C:/Users/DanielPerret/Box/PlotsPlanesPixels/data/LCMS/psme_causeofchange_annual.tif",
             datatype = "INT1U",
             overwrite=TRUE)
