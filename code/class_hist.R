@@ -1,5 +1,5 @@
-df <- data.frame(values = values(ocho.pred.lcms %>%  
-                                   terra::subset(., paste0(2021:2023)))) %>%
+df <- data.frame(values = values(klam.pred.lcms %>%  
+                                   terra::subset(., paste0(2003:2016)))) %>%
                                    #app(.,sum,na.rm=T))) %>% 
   pivot_longer(cols=where(is.numeric)) %>% 
   na.omit()
@@ -16,7 +16,7 @@ df %>%
          aes(x = value,
              fill = quartile)) +
   geom_histogram() +
-  lims(x = c(-15,5))+
+  lims(x = c(-35,15))+
   scale_color_manual(values = c("low" = "tan",
                                 "mod" = "gold2",
                                 "cons" = "orange",
